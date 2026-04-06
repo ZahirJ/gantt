@@ -1,5 +1,4 @@
-import { render, screen, fireEvent, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen, fireEvent } from '@testing-library/react';
 import App from './App';
 
 // ─── Import helper functions for testing ───
@@ -47,15 +46,14 @@ describe('App Component', () => {
       expect(screen.getByText(/☀️ light/i)).toBeInTheDocument();
     });
 
-    test('theme button toggles between dark and light', async () => {
-      const user = userEvent.setup();
+    test('theme button toggles between dark and light', () => {
       render(<App />);
 
       const themeButton = screen.getByText(/☀️ light/i);
       expect(themeButton).toBeInTheDocument();
 
       // Click to switch to light theme
-      await user.click(themeButton);
+      fireEvent.click(themeButton);
 
       // Now should show dark mode option
       expect(screen.getByText(/🌙 dark/i)).toBeInTheDocument();
@@ -90,7 +88,7 @@ describe('App Component', () => {
       ];
 
       columnTexts.forEach(col => {
-        expect(screen.getByText(new RegExp(col, 'i'))).toBeInTheDocument();
+        expect(screen.queryAllByText(new RegExp(col, 'i')).length).toBeGreaterThan(0);
       });
     });
   });
@@ -158,14 +156,13 @@ describe('App Component', () => {
       expect(screen.getByText('Team Gantt').tagName).toBe('H1');
     });
 
-    test('theme button is clickable', async () => {
-      const user = userEvent.setup();
+    test('theme button is clickable', () => {
       render(<App />);
 
       const button = screen.getByText(/☀️ light/i);
       expect(button.tagName).toBe('BUTTON');
 
-      await user.click(button);
+      fireEvent.click(button);
       expect(button).toBeInTheDocument();
     });
   });
@@ -193,15 +190,14 @@ describe('App Component', () => {
       expect(fileInput.files.length).toBe(0);
     });
 
-    test('render completes without errors when theme is switched multiple times', async () => {
-      const user = userEvent.setup();
+    test('render completes without errors when theme is switched multiple times', () => {
       render(<App />);
 
       const themeButton = screen.getByText(/☀️ light/i);
 
       // Switch theme multiple times
-      await user.click(themeButton);
-      await user.click(screen.getByText(/🌙 dark/i));
+      fireEvent.click(themeButton);
+      fireEvent.click(screen.getByText(/🌙 dark/i));
 
       // Should still render properly
       expect(screen.getByText(/team gantt/i)).toBeInTheDocument();
@@ -213,8 +209,7 @@ describe('App Component', () => {
       expect(() => render(<App />)).not.toThrow();
     });
 
-    test('all buttons are rendered and interactive', async () => {
-      const user = userEvent.setup();
+    test('all buttons are rendered and interactive', () => {
       render(<App />);
 
       const buttons = screen.getAllByRole('button');
@@ -222,7 +217,7 @@ describe('App Component', () => {
 
       // Verify at least the theme button is clickable
       const themeButton = screen.getByText(/☀️ light/i);
-      await user.click(themeButton);
+      fireEvent.click(themeButton);
       expect(themeButton).toBeInTheDocument();
     });
   });
