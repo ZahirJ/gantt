@@ -409,64 +409,91 @@ export default function GanttApp() {
   }
 
   function optimizeAndRedistributeTasks() {
-    // Save current state to undo history
-    const previousState = { assignments: { ...assignments } };
-    setUndoHistory((prev) => [...prev, previousState]);
+    setUndoHistory(h => [...h, { assignments: { ...assignments } }]);
 
-    const optimized = { ...assignments };
+    const isTest = (t) => /^add tests?\b/i.test(String(t["Description"] || "").trim());
+    const snStr = (t) => String(t["Serial Number"]);
+    const snMap = new Map(filteredRaw.map(t => [snStr(t), t]));
 
-    // Identify redistributable tasks: only "Test" and "Development" category tasks
-    const redistributable = filteredRaw.filter((t) => {
-      const cat = (t["Category"] || "").toLowerCase();
-      const isTestOrDev = cat === "test" || cat === "development";
-      // Only redistribute if originally assigned (don't move unassigned)
-      const hasOriginalAssignee = t["Assignee"];
-      return isTestOrDev && hasOriginalAssignee;
-    });
+    // Map each test task to its lead: the first non-test task it directly depends on
+    const testToLead = new Map();
+    for (const task of filteredRaw) {
+      if (!isTest(task)) continue;
+      const deps = String(task["Depends On"] || "").split(/[,;]/).map(s => s.trim()).filter(s => s && s !== "0");
+      const leadSN = deps.find(sn => { const d = snMap.get(sn); return d && !isTest(d); });
+      if (leadSN) testToLead.set(snStr(task), leadSN);
+    }
 
-    // Calculate current load per resource (total days)
-    const load = {};
-    resources.forEach((r) => (load[r] = 0));
-    filteredRaw.forEach((t) => {
-      const sn = t["Serial Number"];
-      const days = parseInt(t["Days"]) || 1;
-      const assignee = optimized[sn];
-      if (assignee && load[assignee] !== undefined) {
-        load[assignee] += days;
+    // Build units (lead task + its test dependents) in serial number order
+    const units = filteredRaw
+      .filter(t => !(isTest(t) && testToLead.has(snStr(t))))
+      .map(t => {
+        const sn = snStr(t);
+        const testSNs = filteredRaw.filter(x => isTest(x) && testToLead.get(snStr(x)) === sn).map(snStr);
+        return { leadSN: sn, taskSNs: [sn, ...testSNs] };
+      });
+
+    // If any resource has no tasks: assign all units round-robin in serial number order
+    const hasEmptyResource = resources.some(r => !filteredRaw.some(t => assignments[snStr(t)] === r));
+    let next = { ...assignments };
+    if (hasEmptyResource) {
+      next = {};
+      units.forEach((unit, idx) => {
+        const assignee = resources[idx % resources.length];
+        unit.taskSNs.forEach(sn => { next[sn] = assignee; });
+      });
+    }
+
+    // Compute finish date per resource using the real scheduling engine
+    const getEndDates = (assign) => {
+      const scheduled = scheduleTasks(filteredRaw, assign, holidays, vacMap, projectStart);
+      return Object.fromEntries(resources.map(r => {
+        const rTasks = scheduled.filter(t => assign[snStr(t)] === r && t._end);
+        return [r, rTasks.length > 0 ? rTasks.reduce((mx, t) => t._end > mx ? t._end : mx, "") : projectStart];
+      }));
+    };
+
+    // Count working days between two ISO date strings
+    const workdaysBetween = (a, b) => {
+      if (a >= b) return 0;
+      let count = 0;
+      const d = new Date(a);
+      const end = new Date(b);
+      while (d < end) {
+        d.setDate(d.getDate() + 1);
+        if (isWorkday(d, holidays, vacMap, null)) count++;
       }
-    });
+      return count;
+    };
 
-    // Redistribute test/dev tasks to balance load (least-loaded person)
-    redistributable.forEach((task) => {
-      const sn = task["Serial Number"];
-      const days = parseInt(task["Days"]) || 1;
-      const currentAssignee = optimized[sn];
+    // Leveling loop: move first unit from most-loaded resource to any resource
+    // that is more than 5 working days behind the maximum finish date
+    let moved = true;
+    let maxIter = units.length * resources.length * 3;
+    while (moved && maxIter-- > 0) {
+      moved = false;
+      const endDates = getEndDates(next);
+      const maxEnd = Object.values(endDates).reduce((mx, d) => d > mx ? d : mx, "");
 
-      // Find least-loaded resource
-      const leastLoaded = resources.reduce((a, b) => (load[a] <= load[b] ? a : b));
+      for (const resource of resources) {
+        if (endDates[resource] >= maxEnd) continue;
+        if (workdaysBetween(endDates[resource], maxEnd) <= 5) continue;
 
-      // Only reassign if it would improve load balance
-      if (leastLoaded !== currentAssignee && load[leastLoaded] < load[currentAssignee]) {
-        // Check if dependencies are satisfied (all dependencies assigned to valid people)
-        const deps = (task["Depends On"] || "").split(",").map((s) => s.trim()).filter(Boolean);
-        const depsValid = deps.every((depSn) => {
-          const depTask = filteredRaw.find((t) => t["Serial Number"] === depSn);
-          return depTask && optimized[depSn]; // Dependencies must have assignees
-        });
+        // Take the first unit from the most-loaded resource and give it to this one
+        const overloaded = resources.reduce((mx, r) => endDates[r] > endDates[mx] ? r : mx, resources[0]);
+        const snap = next;
+        const candidates = units.filter(u => snap[u.leadSN] === overloaded);
+        if (candidates.length === 0) continue;
 
-        if (depsValid) {
-          // Update load accounting
-          if (currentAssignee && load[currentAssignee] !== undefined) {
-            load[currentAssignee] -= days;
-          }
-          load[leastLoaded] += days;
-          optimized[sn] = leastLoaded;
-        }
+        const trial = { ...next };
+        for (const sn of candidates[0].taskSNs) trial[sn] = resource;
+        next = trial;
+        moved = true;
+        break;
       }
-    });
+    }
 
-    // Apply optimized assignments
-    setAssignments(optimized);
+    setAssignments(next);
   }
 
   function undoOptimization() {
