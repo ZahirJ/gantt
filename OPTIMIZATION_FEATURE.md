@@ -2,27 +2,25 @@
 
 ## Overview
 
-The **Task Optimization** feature automatically redistributes Test and Development tasks across team members to minimize the project end date while maintaining all dependency constraints and respecting Research task assignments.
+The **Task Optimization** feature redistributes **test tasks** across team members to minimize the project end date while maintaining dependency constraints and avoiding idle gaps for each resource.
 
 ## How It Works
 
 ### Feature Behavior
 
 1. **Identifies Redistributable Tasks**
-   - Only tasks with `Category` = "Test" or "Development" are eligible for redistribution
-   - Tasks must have an original assignee (unassigned tasks are skipped)
+   - A task is a **test task** if its `Description` starts with `Add test` or `Add tests` (case-insensitive)
+   - Unassigned test tasks are eligible and may be assigned by the optimizer
    - Research tasks are NEVER moved (remain with original assignee)
 
 2. **Calculates Current Workload**
-   - Computes total days of work per team member
-   - Includes all task types in the load calculation
+   - Builds a dependency-aware schedule to estimate total project duration
 
 3. **Optimizes Assignment**
-   - For each redistributable task:
-     - Identifies the least-loaded team member
-     - Only reassigns if it improves load balance
-     - Verifies all dependencies are satisfied (have assignees)
-   - Iteratively balances the team's workload
+   - Iteratively tests moving each test task to each resource
+   - Accepts a move only if it shortens the overall finish date
+   - Rejects any assignment that introduces idle gaps for a resource
+   - Dependencies must be assigned and satisfied in the simulated schedule
 
 4. **Saves State for Undo**
    - Before optimization runs, current assignments are saved
@@ -31,17 +29,17 @@ The **Task Optimization** feature automatically redistributes Test and Developme
 ## UI Controls
 
 ### Optimize Button (⚡ Optimize)
-- **Location:** Top bar (bright blue accent color)
-- **Tooltip:** "Optimize: Redistribute Test & Development tasks to minimize end date"
-- **Action:** Runs the optimization algorithm
-- **Result:** Assignments are updated, Gantt chart recalculates automatically
+ - **Location:** Top bar (bright blue accent color)
+ - **Tooltip:** "Optimize: Redistribute test tasks to minimize end date"
+ - **Action:** Runs the optimization algorithm
+ - **Result:** Assignments are updated, Gantt chart recalculates automatically
 
 ### Undo Button (↶ Undo)
-- **Location:** Top bar (yellow color)
-- **Visibility:** Only appears when there are changes to undo
-- **Tooltip:** "Undo last optimization"
-- **Action:** Reverts assignments to the previous state
-- **Note:** Undoing clears the history (can't redo after undo)
+ - **Location:** Top bar (yellow color)
+ - **Visibility:** Only appears when there are changes to undo
+ - **Tooltip:** "Undo last optimization"
+ - **Action:** Reverts assignments to the previous state
+ - **Note:** Undoing clears the history (can't redo after undo)
 
 ## Example Scenarios
 
@@ -54,7 +52,7 @@ Bob (Developer):   Task 3 (2 days) = 2 days
 Carol (QA):        Task 4 (1 day) = 1 day
 ```
 
-Task 2 is a Development task, originally assigned to Alice.
+Task 2 is a test task (Description starts with "Add test"), originally assigned to Alice.
 
 **After Optimization:**
 ```
@@ -73,7 +71,7 @@ Bob (Developer):    Dev Task (5 days) — May be redistributed
 Carol (QA):         Test Task (3 days) — May be redistributed
 ```
 
-Research tasks stay with Alice regardless of load balance.
+Only tasks whose descriptions start with "Add test" are eligible for redistribution.
 
 ### Scenario 3: Dependency Constraints
 
@@ -91,8 +89,8 @@ If moving Task B would violate dependencies, optimization skips it.
 ## Technical Implementation
 
 ### State Management
-- `undoHistory`: Array of previous assignment states
-- `assignments`: Object mapping task serial number to assignee name
+ - `undoHistory`: Array of previous assignment states
+ - `assignments`: Object mapping task serial number to assignee name
 
 ### Core Functions
 
@@ -100,10 +98,10 @@ If moving Task B would violate dependencies, optimization skips it.
 ```javascript
 function optimizeAndRedistributeTasks() {
   // 1. Save current state to undo history
-  // 2. Filter for Test/Development tasks with assignees
-  // 3. Calculate load per resource
-  // 4. Iterate: assign each task to least-loaded person
-  // 5. Verify dependencies are satisfied
+  // 2. Identify test tasks by description prefix (Add test / Add tests)
+  // 3. Simulate schedule to estimate project duration
+  // 4. Try moving tasks across resources to reduce end date
+  // 5. Reject assignments that introduce resource gaps
   // 6. Update state with optimized assignments
 }
 ```
@@ -121,10 +119,10 @@ function undoOptimization() {
 
 | Constraint | Enforced? | Details |
 |-----------|-----------|---------|
-| Respect dependencies | ✅ Yes | All task dependencies must have assignees |
-| Protect research | ✅ Yes | Only Test/Development tasks redistributed |
-| Only move assigned tasks | ✅ Yes | Unassigned tasks remain unassigned |
-| Improve load balance | ✅ Yes | Only reassign if it reduces workload difference |
+| Respect dependencies | ✅ Yes | Dependencies must be assigned and satisfied in the simulated schedule |
+| Only test tasks | ✅ Yes | Description starts with "Add test" or "Add tests" |
+| Allow unassigned test tasks | ✅ Yes | Eligible test tasks can be assigned by optimizer |
+| Avoid resource gaps | ✅ Yes | Assignments that introduce idle gaps are rejected |
 | Respect workdays | ✅ Yes | Scheduling still respects holidays/vacation (automatic) |
 
 ## Usage Workflow
@@ -141,7 +139,7 @@ function undoOptimization() {
 6. If not happy, click **↶ Undo** to restore previous assignments
 
 ### Advanced Workflow
-- Run optimize multiple times if some tasks have flexible categories (mark as "Test" or "Dev")
+- Run optimize multiple times if some tasks are marked with "Add test" descriptions
 - Manually adjust assignments after optimization if needed
 - Save your final session when satisfied
 
@@ -150,9 +148,8 @@ function undoOptimization() {
 1. **Single Undo Level:** Only the most recent optimization can be undone
    - Workaround: Save your session before each optimization attempt
 
-2. **Category Sensitivity:** Only redistributes Test/Development tasks
-   - If you want other categories redistributed, change their category name
-   - Ensure category names are exactly "Test", "Development", or "Research" (case-insensitive)
+2. **Description Sensitivity:** Only redistributes tasks whose description starts with "Add test" or "Add tests"
+   - Ensure the description prefix matches exactly (case-insensitive)
 
 3. **No Rollback After Undo:** Undoing clears the undo history
    - You cannot "redo" after an undo
@@ -164,31 +161,30 @@ function undoOptimization() {
 ## Algorithm Details
 
 ### Load Balancing Strategy
-The optimization uses a **greedy least-loaded approach:**
+The optimization uses a **duration-minimizing schedule simulation:**
 ```
-for each redistributable task T:
-  1. Find the team member with the least total workload
-  2. If that person has less work than T's current assignee:
-     3. Check if all of T's dependencies have assignees
-     4. If yes, move T to the least-loaded person
-     5. Update load accounting
+for each test task T:
+  1. Try T on each team member
+  2. Simulate the schedule and compute the overall finish time
+  3. Reject assignments that create resource gaps
+  4. Keep the assignment that shortens the project end date
 ```
 
 ### Time Complexity
-- O(n * m) where n = number of redistributable tasks, m = number of team members
-- Practical performance: <100ms even for 100+ tasks and 10+ team members
+- O(n * m) per iteration where n = number of test tasks, m = team members
+- Practical performance: still fast for typical project sizes
 
 ### Optimality
-- **Not globally optimal:** The greedy approach may not find the absolute best assignment
-- **Practical good results:** Usually improves project end date by 10-30% for unbalanced projects
+- **Not globally optimal:** The heuristic may not find the absolute best assignment
+- **Practical good results:** Usually improves project end date for unbalanced projects
 - **Why not exhaustive search:** Too slow for real-world projects (NP-hard problem)
 
 ## Testing
 
 ### Unit Tests
 ```javascript
-test('optimize button is present in top bar when on gantt tab')
-test('renders app without errors after adding optimize feature')
+ test('optimize button is present in top bar when on gantt tab')
+ test('renders app without errors after adding optimize feature')
 ```
 
 ### Integration Testing
@@ -217,24 +213,23 @@ Possible improvements:
 ## Troubleshooting
 
 ### Issue: Optimize button doesn't change assignments
-**Cause:** All redistributable tasks already optimally assigned
-**Solution:** None needed; your project is already balanced
+-**Cause:** All eligible test tasks are already optimally assigned
+ **Solution:** None needed; your project is already balanced
 
 ### Issue: Undo button appears but is grayed out
-**Cause:** UI bug (shouldn't happen)
-**Solution:** Refresh the page; reload your session
+ **Cause:** UI bug (shouldn't happen)
+ **Solution:** Refresh the page; reload your session
 
 ### Issue: Research task moved despite protection
-**Cause:** Category name mismatch (not exactly "Research")
-**Solution:** Fix the category name in your Excel file to exactly "Research"
++**Cause:** Task description starts with "Add test" so it is eligible
++**Solution:** Remove the "Add test" prefix if you want it excluded
 
 ### Issue: Dependencies broken after optimization
-**Cause:** Bug in dependency checking (should not happen)
-**Solution:** Click Undo immediately; report issue with task file
+ **Cause:** Bug in dependency checking (should not happen)
+ **Solution:** Click Undo immediately; report issue with task file
 
 ---
 
 ## Summary
 
-The Optimize feature provides a powerful, one-click way to improve project timelines by intelligently redistributing work while respecting all constraints. Use it early and often to keep your team balanced!
-
+The Optimize feature provides a one-click way to improve project timelines by redistributing test tasks while respecting dependency and no-gap constraints. Use it early and often to keep your team balanced!

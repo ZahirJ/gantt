@@ -21,3 +21,18 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+node_modules/
+build/
+.DS_Store
+
+# IDE
+.idea/
+
+# Audit/security scan outputs
+audit-*.json
+snyk-*.json
+snyk-*.txt
+SECURITY_REPORT.md
+
+# Example files with potentially sensitive data
+examples/ObjectStorageLibrary-Workplan-copy*
