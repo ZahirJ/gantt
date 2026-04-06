@@ -14,6 +14,8 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Per-task progress sliders (% complete) shown inline on bars
 - Week and month zoom levels
 - Filter tasks by category
+- Filter Gantt view by resource (single person)
+- Test tasks are highlighted with a distinct color and TEST badge
 
 ### 👥 Resource Management
 - Assign tasks to team members via dropdown in the Gantt view
@@ -34,6 +36,14 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Per-person vacation days
 - Tasks scheduled by Serial Number order when multiple are ready to start
 - Dependency-aware: a task won't start until all its dependencies are complete
+- Optimization minimizes total project duration
+- Optimization avoids resource idle gaps (contiguous work per resource)
+
+### ⚡ Optimization
+- The Optimize button reassigns **test tasks** to shorten the overall project finish date
+- Only tasks whose Description starts with `Add test` or `Add tests` are eligible
+- Dependencies are respected; assignments that create resource gaps are rejected
+- Undo restores the pre-optimization assignments
 
 ### 🎨 Themes
 - Dark mode and Light mode
