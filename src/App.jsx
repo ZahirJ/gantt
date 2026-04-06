@@ -1,6 +1,5 @@
 import { useState, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
-import { optimizeAndRedistributeTasks, undoOptimization } from "./utils/optimize";
 
 // ── Themes ─────────────────────────────────────────────────────────────────────
 const THEMES = {
@@ -52,11 +51,6 @@ function statusColor(s = "", theme = "dark") {
   return makeStatusColor(theme)[s.toLowerCase()] || THEMES[theme].muted;
 }
 
-function isTestTaskDescription(desc = "") {
-  return /^add tests?\b/i.test(String(desc).trim());
-}
-
-// ── Constants ──────────────────────────────────────────────────────────────────
 const SIZE_DAYS = { S: 1, M: 3, L: 5, XL: 10 };
 
 // ── File parsing ───────────────────────────────────────────────────────────────
@@ -246,7 +240,6 @@ export default function GanttApp() {
   const [newResource, setNewResource] = useState("");
   const [undoHistory, setUndoHistory] = useState([]);
   const [filterCategory, setFilterCategory] = useState("All");
-  const [filterResource, setFilterResource] = useState("All");
   const [themeKey, setThemeKey] = useState("dark");
   const C = THEMES[themeKey];
   const fileRef = useRef();
@@ -254,17 +247,11 @@ export default function GanttApp() {
   const [dragOverPerson, setDragOverPerson] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { sn, x, y, currentPerson }
 
-  function applyManualAssignments(nextAssignments) {
-    setAssignments((prev) => (typeof nextAssignments === "function" ? nextAssignments(prev) : nextAssignments));
-    setUndoHistory([]);
-  }
-
   function loadTasks(tasks) {
     setRawTasks(tasks);
     const a = {};
     tasks.forEach((t) => { if (t["Assignee"]) a[t["Serial Number"]] = t["Assignee"]; });
     setAssignments(a);
-    setUndoHistory([]);
     const p = {};
     tasks.forEach((t) => {
       const s = (t["Status"] || "").toLowerCase();
@@ -284,7 +271,6 @@ export default function GanttApp() {
         // Restore full session
         setRawTasks(tasks);
         setAssignments(session.assignments);
-        setUndoHistory([]);
         setProgress(session.progress);
         if (session.projectStart) setProjectStart(session.projectStart);
         if (session.themeKey) setThemeKey(session.themeKey);
@@ -315,11 +301,6 @@ export default function GanttApp() {
     scheduleTasks(filteredRaw, assignments, holidays, vacMap, projectStart),
     [filteredRaw, assignments, holidays, vacMap, projectStart]);
 
-  const ganttTasks = useMemo(() => {
-    if (filterResource === "All") return scheduledTasks;
-    return scheduledTasks.filter((t) => assignments[t["Serial Number"]] === filterResource);
-  }, [scheduledTasks, assignments, filterResource]);
-
   const projectEnd = useMemo(() =>
     scheduledTasks.reduce((mx, t) => (t._end > mx ? t._end : mx), projectStart),
     [scheduledTasks, projectStart]);
@@ -340,7 +321,7 @@ export default function GanttApp() {
   const rowH = 40;
   const labelW = 370;
   const totalW = workDates.length * colW;
-  const totalH = ganttTasks.length * rowH;
+  const totalH = scheduledTasks.length * rowH;
 
   function dateToIdx(dateStr) {
     const idx = workDates.findIndex((d) => fmtDate(d) >= dateStr);
@@ -370,13 +351,12 @@ export default function GanttApp() {
 
   function getArrows() {
     const arrows = [];
-    ganttTasks.forEach((task, ti) => {
+    scheduledTasks.forEach((task, ti) => {
       (task["Depends On"] || "").split(",").map((s) => s.trim()).filter(Boolean).forEach((depSN) => {
         const dep = scheduledTasks.find((t) => t["Serial Number"] === depSN);
-        if (!dep || !ganttTasks.some((t) => t["Serial Number"] === depSN)) return;
         if (!dep?._end) return;
         const fx = taskX(dep) + taskW(dep);
-        const fy = ganttTasks.findIndex((t) => t["Serial Number"] === depSN) * rowH + rowH / 2;
+        const fy = scheduledTasks.indexOf(dep) * rowH + rowH / 2;
         const tx = taskX(task);
         const ty = ti * rowH + rowH / 2;
         arrows.push({ fx, fy, tx, ty, key: `${depSN}->${task["Serial Number"]}` });
@@ -403,7 +383,7 @@ export default function GanttApp() {
     setNewResource("");
 
     // Rebalance: distribute unassigned tasks across all resources by load (fewest days first)
-    applyManualAssignments((prev) => {
+    setAssignments((prev) => {
       const next = { ...prev };
 
       // Count current days per person
@@ -428,28 +408,99 @@ export default function GanttApp() {
     });
   }
 
-  function runOptimization() {
-    const tasksForOptimization = rawTasks.map((t) => ({
-      id: t["Serial Number"],
-      category: t["Category"],
-      description: t["Description"],
-      durationDays: parseInt(t["Days"]) || 1,
-      dependencies: String(t["Depends On"] || "").split(",").map((s) => s.trim()).filter(Boolean),
-      originalAssignee: t["Assignee"] || "",
-    }));
+  function optimizeAndRedistributeTasks() {
+    setUndoHistory(h => [...h, { assignments: { ...assignments } }]);
 
-    optimizeAndRedistributeTasks({
-      tasks: tasksForOptimization,
-      teamMembers: resources,
-      assignments,
-      undoHistory,
-      setAssignments,
-      setUndoHistory,
-    });
+    const isTest = (t) => /^add tests?\b/i.test(String(t["Description"] || "").trim());
+    const snStr = (t) => String(t["Serial Number"]);
+    const snMap = new Map(filteredRaw.map(t => [snStr(t), t]));
+
+    // Map each test task to its lead: the first non-test task it directly depends on
+    const testToLead = new Map();
+    for (const task of filteredRaw) {
+      if (!isTest(task)) continue;
+      const deps = String(task["Depends On"] || "").split(/[,;]/).map(s => s.trim()).filter(s => s && s !== "0");
+      const leadSN = deps.find(sn => { const d = snMap.get(sn); return d && !isTest(d); });
+      if (leadSN) testToLead.set(snStr(task), leadSN);
+    }
+
+    // Build units (lead task + its test dependents) in serial number order
+    const units = filteredRaw
+      .filter(t => !(isTest(t) && testToLead.has(snStr(t))))
+      .map(t => {
+        const sn = snStr(t);
+        const testSNs = filteredRaw.filter(x => isTest(x) && testToLead.get(snStr(x)) === sn).map(snStr);
+        return { leadSN: sn, taskSNs: [sn, ...testSNs] };
+      });
+
+    // If any resource has no tasks: assign all units round-robin in serial number order
+    const hasEmptyResource = resources.some(r => !filteredRaw.some(t => assignments[snStr(t)] === r));
+    let next = { ...assignments };
+    if (hasEmptyResource) {
+      next = {};
+      units.forEach((unit, idx) => {
+        const assignee = resources[idx % resources.length];
+        unit.taskSNs.forEach(sn => { next[sn] = assignee; });
+      });
+    }
+
+    // Compute finish date per resource using the real scheduling engine
+    const getEndDates = (assign) => {
+      const scheduled = scheduleTasks(filteredRaw, assign, holidays, vacMap, projectStart);
+      return Object.fromEntries(resources.map(r => {
+        const rTasks = scheduled.filter(t => assign[snStr(t)] === r && t._end);
+        return [r, rTasks.length > 0 ? rTasks.reduce((mx, t) => t._end > mx ? t._end : mx, "") : projectStart];
+      }));
+    };
+
+    // Count working days between two ISO date strings
+    const workdaysBetween = (a, b) => {
+      if (a >= b) return 0;
+      let count = 0;
+      const d = new Date(a);
+      const end = new Date(b);
+      while (d < end) {
+        d.setDate(d.getDate() + 1);
+        if (isWorkday(d, holidays, vacMap, null)) count++;
+      }
+      return count;
+    };
+
+    // Leveling loop: move first unit from most-loaded resource to any resource
+    // that is more than 5 working days behind the maximum finish date
+    let moved = true;
+    let maxIter = units.length * resources.length * 3;
+    while (moved && maxIter-- > 0) {
+      moved = false;
+      const endDates = getEndDates(next);
+      const maxEnd = Object.values(endDates).reduce((mx, d) => d > mx ? d : mx, "");
+
+      for (const resource of resources) {
+        if (endDates[resource] >= maxEnd) continue;
+        if (workdaysBetween(endDates[resource], maxEnd) <= 5) continue;
+
+        // Take the first unit from the most-loaded resource and give it to this one
+        const overloaded = resources.reduce((mx, r) => endDates[r] > endDates[mx] ? r : mx, resources[0]);
+        const snap = next;
+        const candidates = units.filter(u => snap[u.leadSN] === overloaded);
+        if (candidates.length === 0) continue;
+
+        const trial = { ...next };
+        for (const sn of candidates[0].taskSNs) trial[sn] = resource;
+        next = trial;
+        moved = true;
+        break;
+      }
+    }
+
+    setAssignments(next);
   }
 
-  function runUndoOptimization() {
-    undoOptimization({ undoHistory, setUndoHistory, setAssignments });
+  function undoOptimization() {
+    if (undoHistory.length === 0) return;
+    const previousState = undoHistory[undoHistory.length - 1];
+    setUndoHistory((prev) => prev.slice(0, -1));
+    setAssignments(previousState.assignments);
   }
 
   function exportCSV() {
@@ -459,9 +510,7 @@ export default function GanttApp() {
       t["Status"], t["Complexity"], t["Days"], t._start, t._end,
       assignments[t["Serial Number"]] || "", t["Integration Effort"],
     ]);
-    const csv = [headers, ...rows]
-      .map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(","))
-      .join("\n");
+    const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = "gantt_scheduled.csv";
@@ -481,13 +530,14 @@ export default function GanttApp() {
       t["Integration Effort"],
     ]);
     const scheduleWS = XLSX.utils.aoa_to_sheet([scheduleHeaders, ...scheduleRows]);
+    // Column widths
     scheduleWS["!cols"] = [
       { wch: 14 }, { wch: 22 }, { wch: 50 }, { wch: 14 }, { wch: 14 },
       { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 18 },
     ];
     XLSX.utils.book_append_sheet(wb, scheduleWS, "Schedule");
 
-    // ── Sheet 2: Session ──
+    // ── Sheet 2: Session (everything needed to restore state) ──
     const sessionRows = [
       ["GANTT SESSION DATA — import this file to restore your work"],
       [],
@@ -611,9 +661,9 @@ export default function GanttApp() {
           style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 13 }}>
           {themeKey === "dark" ? "☀️" : "🌙"}
         </button>
-        <button onClick={runOptimization} style={{ background: C.accent, border: "none", color: "#fff", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Optimize: Redistribute test tasks to minimize end date">⚡ Optimize</button>
+        <button onClick={optimizeAndRedistributeTasks} style={{ background: C.accent, border: "none", color: "#fff", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Optimize: Redistribute Test & Development tasks to minimize end date">⚡ Optimize</button>
         {undoHistory.length > 0 && (
-          <button onClick={runUndoOptimization} style={{ background: C.yellow, border: "none", color: C.bg, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Undo last optimization">↶ Undo</button>
+          <button onClick={undoOptimization} style={{ background: C.yellow, border: "none", color: C.bg, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Undo last optimization">↶ Undo</button>
         )}
         <button onClick={() => setScreen("import")} style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11 }}>↑ Import</button>
       </div>
@@ -622,7 +672,7 @@ export default function GanttApp() {
       {tab === "gantt" && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           {/* Category filter */}
-          <div style={{ display: "flex", gap: 6, padding: "8px 16px", borderBottom: `1px solid ${C.border}`, overflowX: "auto", flexShrink: 0, background: C.surface + "88", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 6, padding: "8px 16px", borderBottom: `1px solid ${C.border}`, overflowX: "auto", flexShrink: 0, background: C.surface + "88" }}>
             {categories.map((cat) => (
               <button key={cat} onClick={() => setFilterCategory(cat)} style={{
                 background: filterCategory === cat ? C.accent : C.card,
@@ -631,18 +681,7 @@ export default function GanttApp() {
                 borderRadius: 20, padding: "3px 12px", cursor: "pointer", fontSize: 11, whiteSpace: "nowrap",
               }}>{cat}</button>
             ))}
-            <div style={{ marginLeft: 8, display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace" }}>RESOURCE</span>
-              <select
-                value={filterResource}
-                onChange={(e) => setFilterResource(e.target.value)}
-                style={{ background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, fontSize: 10, padding: "2px 6px" }}
-              >
-                <option value="All">All</option>
-                {resources.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </div>
-           </div>
+          </div>
 
           <div style={{ flex: 1, overflow: "auto" }}>
             <div style={{ display: "flex", minWidth: labelW + totalW }}>
@@ -655,37 +694,30 @@ export default function GanttApp() {
                   <span style={{ fontSize: 10, color: C.muted, width: 80 }}>Assignee</span>
                   <span style={{ fontSize: 10, color: C.muted, width: 28, textAlign: "right" }}>Days</span>
                 </div>
-                {ganttTasks.map((task, i) => {
+                {scheduledTasks.map((task, i) => {
                   const sc = statusColor(task["Status"], themeKey);
-                  const isTestTask = isTestTaskDescription(task["Description"]);
-                  const rowBg = isTestTask ? C.purple + "22" : (i % 2 === 0 ? "transparent" : C.surface + "55");
-                   return (
-                     <div key={task["Serial Number"]} style={{
-                       height: rowH, display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
-                       borderBottom: `1px solid ${C.border}18`,
-                       background: rowBg,
-                     }}>
-                       <span style={{ width: 26, fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{task["Serial Number"]}</span>
-                       <div style={{ flex: 1, overflow: "hidden" }}>
-                         <div style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={task["Description"]}>{task["Description"]}</div>
-                        <div style={{ fontSize: 9, color: sc, marginTop: 1, display: "flex", alignItems: "center", gap: 6 }}>
-                          <span>{task["Status"]}</span>
-                          {isTestTask && (
-                            <span style={{ fontSize: 9, color: C.purple, fontFamily: "'DM Mono', monospace" }}>TEST</span>
-                          )}
-                        </div>
-                       </div>
-                       <select
-                         value={assignments[task["Serial Number"]] || ""}
-                         onChange={(e) => applyManualAssignments((a) => ({ ...a, [task["Serial Number"]]: e.target.value }))}
-                         style={{ width: 86, background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 4, fontSize: 10, padding: "2px 4px", flexShrink: 0 }}                      >
-                         <option value="">— unset</option>
-                         {resources.map((r) => <option key={r} value={r}>{r}</option>)}
-                       </select>
-                       <span style={{ width: 28, fontSize: 10, color: C.muted, textAlign: "right", flexShrink: 0 }}>{task["Days"]}d</span>
-                     </div>
-                   );
-                 })}
+                  return (
+                    <div key={task["Serial Number"]} style={{
+                      height: rowH, display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
+                      borderBottom: `1px solid ${C.border}18`,
+                      background: i % 2 === 0 ? "transparent" : C.surface + "55",
+                    }}>
+                      <span style={{ width: 26, fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{task["Serial Number"]}</span>
+                      <div style={{ flex: 1, overflow: "hidden" }}>
+                        <div style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={task["Description"]}>{task["Description"]}</div>
+                        <div style={{ fontSize: 9, color: sc, marginTop: 1 }}>{task["Status"]}</div>
+                      </div>
+                      <select
+                        value={assignments[task["Serial Number"]] || ""}
+                        onChange={(e) => setAssignments((a) => ({ ...a, [task["Serial Number"]]: e.target.value }))}
+                        style={{ width: 86, background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 4, fontSize: 10, padding: "2px 4px", flexShrink: 0 }}                      >
+                        <option value="">— unset</option>
+                        {resources.map((r) => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                      <span style={{ width: 28, fontSize: 10, color: C.muted, textAlign: "right", flexShrink: 0 }}>{task["Days"]}d</span>
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Timeline */}
@@ -715,7 +747,7 @@ export default function GanttApp() {
                   {workDates.map((_, i) => (
                     <line key={i} x1={i * colW} y1={0} x2={i * colW} y2={totalH} stroke={C.border} strokeWidth={0.4} strokeOpacity={0.5} />
                   ))}
-                  {ganttTasks.map((_, i) => (
+                  {scheduledTasks.map((_, i) => (
                     <line key={i} x1={0} y1={i * rowH} x2={totalW} y2={i * rowH} stroke={C.border} strokeWidth={0.3} strokeOpacity={0.35} />
                   ))}
                   {todayIdx >= 0 && (
@@ -737,23 +769,21 @@ export default function GanttApp() {
 
                 {/* Bars */}
                 <div style={{ position: "relative", zIndex: 1 }}>
-                  {ganttTasks.map((task, i) => {
+                  {scheduledTasks.map((task, i) => {
                     const x = taskX(task);
                     const w = taskW(task);
                     const pct = progress[task["Serial Number"]] ?? 0;
                     const col = statusColor(task["Status"], themeKey);
-                    const isTestTask = isTestTaskDescription(task["Description"]);
-                     return (
-                       <div key={task["Serial Number"]} style={{
-                         height: rowH, position: "relative",
-                         background: i % 2 === 0 ? "transparent" : C.surface + "44",
-                       }}>
-                         <div style={{
-                           position: "absolute", left: x, top: 8, width: w, height: rowH - 16,
-                           background: col + "25", border: `1px solid ${col}55`, borderRadius: 4,
-                           boxShadow: isTestTask ? `0 0 0 1px ${C.purple}` : "none",
-                           overflow: "hidden",
-                         }}>
+                    return (
+                      <div key={task["Serial Number"]} style={{
+                        height: rowH, position: "relative",
+                        background: i % 2 === 0 ? "transparent" : C.surface + "44",
+                      }}>
+                        <div style={{
+                          position: "absolute", left: x, top: 8, width: w, height: rowH - 16,
+                          background: col + "25", border: `1px solid ${col}55`, borderRadius: 4,
+                          overflow: "hidden",
+                        }}>
                           <div style={{ width: `${pct}%`, height: "100%", background: col + "44" }} />
                           {w > 44 && (
                             <div style={{
@@ -765,9 +795,9 @@ export default function GanttApp() {
                             </div>
                           )}
                         </div>
-                       </div>
-                     );
-                   })}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -776,7 +806,7 @@ export default function GanttApp() {
           {/* Progress sliders */}
           <div style={{ borderTop: `1px solid ${C.border}`, padding: "10px 20px", display: "flex", gap: 14, overflowX: "auto", background: C.surface, flexShrink: 0, alignItems: "center" }}>
             <span style={{ fontSize: 10, color: C.muted, whiteSpace: "nowrap", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>% DONE</span>
-            {ganttTasks.slice(0, 18).map((task) => (
+            {scheduledTasks.slice(0, 18).map((task) => (
               <div key={task["Serial Number"]} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, minWidth: 52 }}>
                 <span style={{ fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace" }}>{task["Serial Number"]}</span>
                 <input type="range" min={0} max={100} step={5}
@@ -823,7 +853,7 @@ export default function GanttApp() {
                   onDrop={(e) => {
                     e.preventDefault();
                     if (draggingTask && draggingTask.fromPerson !== w.person) {
-                      applyManualAssignments((a) => ({ ...a, [draggingTask.sn]: w.person }));
+                      setAssignments((a) => ({ ...a, [draggingTask.sn]: w.person }));
                     }
                     setDraggingTask(null);
                     setDragOverPerson(null);
@@ -870,44 +900,40 @@ export default function GanttApp() {
                       const sc = statusColor(t["Status"], themeKey);
                       const isDragging = draggingTask?.sn === t["Serial Number"];
                       const isCtxOpen = contextMenu?.sn === t["Serial Number"];
-                      const isTestTask = isTestTaskDescription(t["Description"]);
-                       return (
-                         <div
-                           key={t["Serial Number"]}
-                           draggable
-                           onDragStart={() => setDraggingTask({ sn: t["Serial Number"], fromPerson: w.person })}
-                           onDragEnd={() => { setDraggingTask(null); setDragOverPerson(null); }}
-                           onContextMenu={(e) => {
-                             e.preventDefault();
-                             e.stopPropagation();
-                             setContextMenu({ sn: t["Serial Number"], x: e.clientX, y: e.clientY, currentPerson: w.person });
-                           }}
-                           style={{
-                             display: "flex", gap: 8, alignItems: "center",
-                             background: isCtxOpen ? C.accentDim : isDragging ? C.accentDim : isTestTask ? C.purple + "1a" : C.surface,
-                             border: `1px solid ${isCtxOpen ? C.accent : isDragging ? C.accent : isTestTask ? C.purple : C.border}`,
-                             borderRadius: 6, padding: "6px 10px",
-                             cursor: "grab", opacity: isDragging ? 0.5 : 1,
-                             transition: "opacity 0.15s, border-color 0.15s, background 0.15s",
-                             userSelect: "none",
-                           }}
-                         >
-                           <span style={{ fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace", width: 20, flexShrink: 0 }}>
-                             {t["Serial Number"]}
-                           </span>
-                           <span style={{ fontSize: 11, flex: 1, lineHeight: 1.35, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t["Description"]}>
-                             {t["Description"]}
-                           </span>
-                          {isTestTask && (
-                            <span style={{ fontSize: 9, color: C.purple, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>TEST</span>
-                          )}
-                           <span style={{ fontSize: 9, color: sc, whiteSpace: "nowrap", flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>
-                             {t["Days"]}d
-                           </span>
-                           <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>
-                         </div>
-                       );
-                     })}
+                      return (
+                        <div
+                          key={t["Serial Number"]}
+                          draggable
+                          onDragStart={() => setDraggingTask({ sn: t["Serial Number"], fromPerson: w.person })}
+                          onDragEnd={() => { setDraggingTask(null); setDragOverPerson(null); }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setContextMenu({ sn: t["Serial Number"], x: e.clientX, y: e.clientY, currentPerson: w.person });
+                          }}
+                          style={{
+                            display: "flex", gap: 8, alignItems: "center",
+                            background: isCtxOpen ? C.accentDim : isDragging ? C.accentDim : C.surface,
+                            border: `1px solid ${isCtxOpen ? C.accent : isDragging ? C.accent : C.border}`,
+                            borderRadius: 6, padding: "6px 10px",
+                            cursor: "grab", opacity: isDragging ? 0.5 : 1,
+                            transition: "opacity 0.15s, border-color 0.15s, background 0.15s",
+                            userSelect: "none",
+                          }}
+                        >
+                          <span style={{ fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace", width: 20, flexShrink: 0 }}>
+                            {t["Serial Number"]}
+                          </span>
+                          <span style={{ fontSize: 11, flex: 1, lineHeight: 1.35, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t["Description"]}>
+                            {t["Description"]}
+                          </span>
+                          <span style={{ fontSize: 9, color: sc, whiteSpace: "nowrap", flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>
+                            {t["Days"]}d
+                          </span>
+                          <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>
+                        </div>
+                      );
+                    })}
                     {/* Drop hint */}
                     {isOver && draggingTask?.fromPerson !== w.person && (
                       <div style={{
@@ -950,7 +976,7 @@ export default function GanttApp() {
                     <div
                       key={person}
                       onClick={() => {
-                        if (!isCurrent) applyManualAssignments((a) => ({ ...a, [contextMenu.sn]: person }));
+                        if (!isCurrent) setAssignments((a) => ({ ...a, [contextMenu.sn]: person }));
                         setContextMenu(null);
                       }}
                       style={{
@@ -974,7 +1000,7 @@ export default function GanttApp() {
               <div style={{ borderTop: `1px solid ${C.border}`, padding: "4px 0" }}>
                 <div
                   onClick={() => {
-                    applyManualAssignments((a) => { const n = { ...a }; delete n[contextMenu.sn]; return n; });
+                    setAssignments((a) => { const n = { ...a }; delete n[contextMenu.sn]; return n; });
                     setContextMenu(null);
                   }}
                   style={{
