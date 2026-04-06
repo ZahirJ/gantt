@@ -53,6 +53,10 @@ function statusColor(s = "", theme = "dark") {
 
 const SIZE_DAYS = { S: 1, M: 3, L: 5, XL: 10 };
 
+function isTestTask(desc = "") {
+  return /\btest(ing)?\b/i.test(String(desc).trim());
+}
+
 // ── File parsing ───────────────────────────────────────────────────────────────
 function parseFile(file, callback) {
   const reader = new FileReader();
@@ -773,7 +777,8 @@ export default function GanttApp() {
                     const x = taskX(task);
                     const w = taskW(task);
                     const pct = progress[task["Serial Number"]] ?? 0;
-                    const col = statusColor(task["Status"], themeKey);
+                    const isTest = isTestTask(task["Description"]);
+                    const col = isTest ? C.purple : statusColor(task["Status"], themeKey);
                     return (
                       <div key={task["Serial Number"]} style={{
                         height: rowH, position: "relative",
@@ -781,16 +786,22 @@ export default function GanttApp() {
                       }}>
                         <div style={{
                           position: "absolute", left: x, top: 8, width: w, height: rowH - 16,
-                          background: col + "25", border: `1px solid ${col}55`, borderRadius: 4,
+                          background: col + "30", border: `1px solid ${col}88`, borderRadius: 4,
                           overflow: "hidden",
                         }}>
                           <div style={{ width: `${pct}%`, height: "100%", background: col + "44" }} />
                           {w > 44 && (
                             <div style={{
                               position: "absolute", inset: 0, display: "flex", alignItems: "center",
-                              paddingLeft: 6, fontSize: 9, color: col, overflow: "hidden", whiteSpace: "nowrap",
+                              paddingLeft: 6, gap: 4, fontSize: 9, color: col, overflow: "hidden", whiteSpace: "nowrap",
                               fontFamily: "'DM Mono', monospace",
                             }}>
+                              {isTest && (
+                                <span style={{
+                                  background: col, color: "#fff", borderRadius: 3,
+                                  padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0,
+                                }}>TEST</span>
+                              )}
                               {pct > 0 ? `${pct}% · ` : ""}{task["Description"]?.slice(0, 22)}
                             </div>
                           )}
@@ -900,6 +911,8 @@ export default function GanttApp() {
                       const sc = statusColor(t["Status"], themeKey);
                       const isDragging = draggingTask?.sn === t["Serial Number"];
                       const isCtxOpen = contextMenu?.sn === t["Serial Number"];
+                      const isTest = isTestTask(t["Description"]);
+                      const taskColor = isTest ? C.purple : sc;
                       return (
                         <div
                           key={t["Serial Number"]}
@@ -913,8 +926,8 @@ export default function GanttApp() {
                           }}
                           style={{
                             display: "flex", gap: 8, alignItems: "center",
-                            background: isCtxOpen ? C.accentDim : isDragging ? C.accentDim : C.surface,
-                            border: `1px solid ${isCtxOpen ? C.accent : isDragging ? C.accent : C.border}`,
+                            background: isCtxOpen ? C.accentDim : isDragging ? C.accentDim : isTest ? C.purple + "18" : C.surface,
+                            border: `1px solid ${isCtxOpen ? C.accent : isDragging ? C.accent : isTest ? C.purple + "88" : C.border}`,
                             borderRadius: 6, padding: "6px 10px",
                             cursor: "grab", opacity: isDragging ? 0.5 : 1,
                             transition: "opacity 0.15s, border-color 0.15s, background 0.15s",
@@ -924,10 +937,15 @@ export default function GanttApp() {
                           <span style={{ fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace", width: 20, flexShrink: 0 }}>
                             {t["Serial Number"]}
                           </span>
+                          {isTest && (
+                            <span style={{ background: C.purple, color: "#fff", borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0 }}>
+                              TEST
+                            </span>
+                          )}
                           <span style={{ fontSize: 11, flex: 1, lineHeight: 1.35, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t["Description"]}>
                             {t["Description"]}
                           </span>
-                          <span style={{ fontSize: 9, color: sc, whiteSpace: "nowrap", flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>
+                          <span style={{ fontSize: 9, color: taskColor, whiteSpace: "nowrap", flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>
                             {t["Days"]}d
                           </span>
                           <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>
