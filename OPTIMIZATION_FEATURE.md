@@ -87,6 +87,17 @@ Bob:   Implement PUT (5d) → Add tests for PUT (3d)
 
 ---
 
+## Visual highlighting
+
+Tasks whose description contains the word **test** or **testing** are highlighted in purple throughout the app:
+
+| View | Highlight |
+|---|---|
+| Gantt chart | Purple bar + **TEST** badge |
+| Workload tab | Purple border, purple tint, **TEST** badge |
+
+---
+
 ## Constraints summary
 
 | Constraint | Enforced |
