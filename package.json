@@ -15,6 +15,7 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "stop": "lsof -ti:3000 | xargs kill -9 2>/dev/null || true",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
