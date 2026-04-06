@@ -6,12 +6,20 @@ The **⚡ Optimize** button redistributes tasks across team members to minimise 
 
 ---
 
+## What counts as a test task
+
+Any task whose description contains the word **test** or **testing** (case-insensitive, whole word) is treated as a test task — for both the pairing rule and the purple visual highlight.
+
+Examples: `Add test for GET blob`, `Add tests for listing buckets`, `Testing login flow`
+
+---
+
 ## When it runs
 
 | Condition | Behaviour |
 |---|---|
-| Any resource has **no assigned tasks** | Full redistribution — assigns every task from scratch, then levels |
-| All resources already have tasks | Leveling only — rebalances without reassigning everything |
+| Any resource has **no assigned tasks** | Assigns all tasks from scratch (round-robin), then runs the leveling loop |
+| All resources already have tasks | Runs the leveling loop only — no initial redistribution |
 
 ---
 
@@ -19,62 +27,70 @@ The **⚡ Optimize** button redistributes tasks across team members to minimise 
 
 ### Step 1 — Build units (always)
 
-Tasks are grouped into **units** before any assignment is made:
+Before any assignment changes are made, tasks are grouped into **units**:
 
 - A **unit** = one non-test task + all test tasks that directly depend on it.
-- Test tasks (description matches `Add test(s)…`) are permanently paired with their lead task and always move together.
+- Test tasks are permanently paired with their lead task and always move together as one unit — a test task is never reassigned without its lead.
 - Units are ordered by their lead task's Serial Number.
 
 ### Step 2 — Initial assignment (empty-resource path only)
 
-Units are assigned **round-robin** across all resources in Serial Number order:
+When at least one resource has no tasks, all units are assigned **round-robin** in Serial Number order:
 
 ```
-Unit 1 → Alice
-Unit 2 → Bob
-Unit 3 → Carol
-Unit 4 → Alice
+Unit 1 (SN 1 + its tests) → Alice
+Unit 2 (SN 2 + its tests) → Bob
+Unit 3 (SN 3 + its tests) → Carol
+Unit 4 (SN 4 + its tests) → Alice
 …
 ```
 
 ### Step 3 — Leveling loop (always)
 
-Repeat until stable:
+The leveling loop balances workload by moving tasks from overloaded resources to underloaded ones. It repeats until the team is balanced or no further moves are possible:
 
-1. Compute each resource's finish date using the full scheduling engine.
-2. Find the **maximum** finish date across all resources.
-3. Walk resources in order:
-   - If a resource's finish date equals the maximum → skip.
-   - If a resource's finish date is **more than 5 working days** behind the maximum → take the **first unit** (lowest Serial Number) from the most-loaded resource and reassign it to this resource.
-   - Restart the walk from step 1.
-4. Stop when no resource is more than 5 working days behind the maximum, or no moves are possible.
+1. Compute each resource's predicted finish date using the full scheduling engine (respecting dependencies, holidays, and vacation days).
+2. Find the **latest** finish date across all resources.
+3. Walk through resources in order:
+   - If a resource finishes on the latest date → skip (they are the bottleneck, don't take from them yet).
+   - If a resource finishes **more than 5 working days before** the latest date → they have capacity. Take the **first unit** (lowest Serial Number) from the most-loaded resource and reassign it to them. Restart from step 1.
+4. Stop when every resource finishes within 5 working days of the latest finish date, or no moves are possible.
 
----
-
-## Rules
-
-- **Test tasks never move alone** — they always travel with the task they depend on.
-- **All tasks are eligible** — there is no category restriction.
-- **Dependencies are respected** — the scheduling engine enforces Finish-to-Start; a task waits for its dependency regardless of who it is assigned to.
-- **Undo** — a single click restores the assignments that existed before Optimize was clicked.
+The 5-day threshold prevents unnecessary reshuffling when the imbalance is small.
 
 ---
 
 ## Example
 
-**Before (single resource):**
+### Empty resource (full redistribution + leveling)
+
+**Before:** Bob just joined the team with no tasks assigned.
 ```
-Alice: Implement GET (5d) → Add tests for GET (3d) → Implement PUT (5d) → Add tests for PUT (3d)
-Bob:   (no tasks)
+Alice: SN1-Implement GET (5d), SN2-Add tests for GET (3d),
+       SN3-Implement PUT (5d), SN4-Add tests for PUT (3d)  → finishes day 16
+Bob:   (no tasks)                                          → finishes day 0
 ```
 
-**After Optimize:**
+**After Step 2 (round-robin):**
 ```
-Alice: Implement GET (5d) → Add tests for GET (3d)
-Bob:   Implement PUT (5d) → Add tests for PUT (3d)
+Alice: SN1-Implement GET (5d), SN3-Implement PUT (5d)      → finishes day 10
+Bob:   SN2-Add tests for GET (3d), SN4-Add tests for PUT (3d) → finishes day 8
+```
+Note: `SN2` moves with `SN1` as a unit, `SN4` moves with `SN3` as a unit.
+
+**After Step 3 (leveling):** Alice and Bob are within 5 days — no further moves needed.
+
+---
+
+### Leveling only (all resources already have tasks)
+
+**Before:**
+```
+Alice: 10 tasks → finishes 2026-06-30
+Bob:   2 tasks  → finishes 2026-05-10   (37 working days behind Alice)
 ```
 
-`Implement PUT` and `Add tests for PUT` move together as one unit.
+Bob is more than 5 working days behind Alice. The leveling loop takes the first unit from Alice and gives it to Bob. This repeats until the gap closes to ≤ 5 working days.
 
 ---
 
@@ -89,12 +105,12 @@ Bob:   Implement PUT (5d) → Add tests for PUT (3d)
 
 ## Visual highlighting
 
-Tasks whose description contains the word **test** or **testing** are highlighted in purple throughout the app:
+Test tasks (description contains `test` or `testing`) are highlighted in purple throughout the app:
 
 | View | Highlight |
 |---|---|
 | Gantt chart | Purple bar + **TEST** badge |
-| Workload tab | Purple border, purple tint, **TEST** badge |
+| Workload tab | Purple border, purple background tint, **TEST** badge |
 
 ---
 
