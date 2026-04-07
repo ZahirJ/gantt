@@ -8,13 +8,14 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 
 ### 📊 Gantt Chart
 - Task bars with computed start and end dates
-- Dependency arrows (Finish-to-Start) rendered as curves
+- Smooth curved dependency arrows (Finish-to-Start) rendered as SVG bezier curves
 - Today marker line for at-a-glance progress context
 - Color-coded bars by task status: Open, In Progress, Completed
 - Per-task progress sliders (% complete) shown inline on bars
+- Inline status selector per task — change status directly in the task list
+- Completed tasks are visually locked: non-draggable, assignee disabled, skipped by optimizer
 - Week and month zoom levels
 - Filter tasks by category
-- Filter Gantt view by resource (single person)
 - Test tasks are highlighted with a distinct color and TEST badge
 
 ### 👥 Resource Management
@@ -25,8 +26,9 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 ### 📋 Workload Tab
 - Per-person cards showing task list, total days, and predicted finish date
 - Relative workload bar (green → yellow → red) for quick overload spotting
-- **Drag and drop** tasks between worker cards to reassign
-- **Right-click** any task for an "Assign To" context menu with all available workers, or unassign entirely
+- **Drag and drop** tasks between worker cards to reassign (completed tasks are locked)
+- **Right-click** any task for a context menu to set status or reassign to any worker
+- Completed tasks show a **DONE** badge and cannot be dragged or reassigned
 - All changes recalculate the Gantt instantly
 
 ### ⚙️ Scheduling Engine
@@ -40,9 +42,10 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Optimization avoids resource idle gaps (contiguous work per resource)
 
 ### ⚡ Optimization
-- The Optimize button reassigns **test tasks** to shorten the overall project finish date
-- Only tasks whose Description starts with `Add test` or `Add tests` are eligible
-- Dependencies are respected; assignments that create resource gaps are rejected
+- The Optimize button redistributes tasks to balance workload and shorten the overall project finish date
+- Only tasks whose Description starts with `Add test` or `Add tests` are eligible to move
+- **Completed tasks are never moved** — their assignments are locked regardless of optimizer settings
+- Dependencies are respected; the full scheduling engine (calendar-aware) is used to compare outcomes
 - Undo restores the pre-optimization assignments
 
 ### 🎨 Themes
@@ -91,8 +94,8 @@ The app accepts `.xlsx`, `.xls`, and `.csv` files. Drag and drop onto the import
 | `Serial Number` | Unique task identifier — used for dependency references |
 | `Category` | Task category (e.g. Backend, Frontend) — used for filtering |
 | `Description` | Task name / description |
-| `Depends On` | Comma-separated Serial Numbers this task depends on. Use `0` or leave blank for no dependencies |
-| `Status` | `Open`, `In Progress`, or `Completed` |
+| `Depends On` | Comma-separated Serial Numbers this task depends on. Use `0` or leave blank for no dependencies. Column name is case-insensitive (`Depends on` also accepted) |
+| `Status` | `Open`, `In Progress`, `Completed`, or `Open(May not need fix)` |
 | `Complexity` | T-shirt size: `S`, `M`, `L`, `XL` — used as a fallback if Days is empty |
 | `Days` | Estimated working days |
 | `Assignee` | Team member name — pre-populates assignments on import |
@@ -132,7 +135,7 @@ If the `Days` column is empty, the app falls back to the `Complexity` column usi
 | Sheet | Contents |
 |---|---|
 | `Schedule` | All tasks with computed start/end dates, assignees, progress % |
-| `Session` | Project start, theme, resources, holidays, vacation days, assignments, progress |
+| `Session` | Project start, theme, resources, holidays, vacation days, assignments, progress, task statuses |
 | `Workload` | Per-person summary: tasks, total days, finish date |
 
 **Restoring:** Drop the session file onto the import screen. The app automatically detects the Session sheet and restores your full state.
@@ -164,10 +167,16 @@ If the `Days` column is empty, the app falls back to the `Complexity` column usi
 
 ```
 src/
-└── App.jsx        # Entire application — single self-contained file
+├── App.jsx                        # UI, import/export, drag-and-drop, theme
+└── utils/
+    ├── scheduleUtils.js           # Pure scheduling helpers + levelOptimize (shared with tests)
+    ├── optimize.js                # Legacy greedy optimizer (kept for its test suite)
+    ├── levelOptimize.test.js      # Optimizer tests using the Objectstore workplan fixture
+    ├── optimize.test.js           # Unit tests for the legacy optimizer
+    └── optimize.bench.test.js     # Performance / scale tests
 ```
 
-All logic (scheduling engine, drag and drop, theme system, import/export) lives in `App.jsx`. No external state management or backend required.
+No external state management or backend required.
 
 ---
 
@@ -185,7 +194,7 @@ All logic (scheduling engine, drag and drop, theme system, import/export) lives 
 
 - Dependency type is Finish-to-Start only (Start-to-Start and Finish-to-Finish not yet supported)
 - Progress sliders in the Gantt view show the first 18 tasks only — scroll the Workload tab to see all
-- No undo/redo — use Save Session frequently to preserve checkpoints
+- Undo is available for the Optimize action only; general undo/redo is not yet supported — use Save Session frequently to preserve checkpoints
 - Print/PDF exports the current browser view; for best results use the Gantt tab at month zoom
 
 ---
