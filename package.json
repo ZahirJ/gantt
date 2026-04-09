@@ -3,60 +3,28 @@
   "version": "0.1.0",
   "private": true,
   "dependencies": {
+    "exceljs": "^4.4.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "scripts": {
+    "start": "vite",
+    "stop": "lsof -ti:5173 | xargs kill -9 2>/dev/null || true",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^13.5.0",
-    "exceljs": "^4.4.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "react-scripts": "5.1.0-next.26",
-    "web-vitals": "^2.1.4"
-  },
-  "scripts": {
-    "start": "react-scripts start",
-    "stop": "lsof -ti:3000 | xargs kill -9 2>/dev/null || true",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
-  "overrides": {
-    "minimatch": "5.1.8",
-    "nth-check": "2.1.1",
-    "jsonpath": "1.2.1",
-    "postcss": "8.5.6",
-    "ejs": "4.0.1",
-    "bfj": "9.1.3",
-    "flatted": "3.4.2",
-    "node-forge": "1.4.0",
-    "lodash": "4.18.1",
-    "path-to-regexp": "0.1.13",
-    "svgo": "3.3.3",
-    "serialize-javascript": "7.0.5",
-    "webpack-dev-server": "5.2.1",
-    "picomatch": "4.0.4",
-    "yaml": "2.8.3",
-    "brace-expansion": "2.0.3"
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
-  },
-  "devDependencies": {
+    "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^4.1.4",
+    "jsdom": "^29.0.2",
+    "vite": "^8.0.8",
+    "vitest": "^4.1.4",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.2/xlsx-0.20.2.tgz"
   }
 }

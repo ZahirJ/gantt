@@ -4,8 +4,8 @@ describe('optimizeAndRedistributeTasks', () => {
     let setAssignments, setUndoHistory;
 
     beforeEach(() => {
-        setAssignments = jest.fn();
-        setUndoHistory = jest.fn();
+        setAssignments = vi.fn();
+        setUndoHistory = vi.fn();
     });
 
     test('redistributes tasks to least-loaded member', () => {
@@ -122,8 +122,8 @@ describe('undoOptimization', () => {
     let setUndoHistory, setAssignments;
 
     beforeEach(() => {
-        setUndoHistory = jest.fn();
-        setAssignments = jest.fn();
+        setUndoHistory = vi.fn();
+        setAssignments = vi.fn();
     });
 
     test('restores previous assignments from history', () => {
