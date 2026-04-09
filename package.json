@@ -2,6 +2,9 @@
   "name": "gantt-v6",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "exceljs": "^4.4.0",
     "react": "^19.2.4",
