@@ -28,6 +28,8 @@ export function addWorkdays(date, extraDays, holidays, vacMap, person) {
 }
 
 export function scheduleTasks(rawTasks, assignments, holidays, vacMap, projectStart) {
+  // Bail out silently if the date is still being typed (partial / invalid value)
+  if (!projectStart || isNaN(new Date(projectStart).getTime())) return rawTasks.map((t) => ({ ...t, _start: null, _end: null }));
   const tasks = rawTasks.map((t) => ({ ...t, _start: null, _end: null }));
   const done = new Set();
   let safety = tasks.length * 4;
@@ -103,7 +105,7 @@ export function levelOptimize(tasks, resources, assignments, progress, holidays,
     if (leadSN) testToLead.set(snStr(task), leadSN);
   }
 
-  // Build units (lead task + its test dependents) in serial number order
+  // Build units (lead task + its test dependents)
   const allUnits = tasks
     .filter(t => !(isTest(t) && testToLead.has(snStr(t))))
     .map(t => {
@@ -114,6 +116,65 @@ export function levelOptimize(tasks, resources, assignments, progress, holidays,
 
   // Only move units where no task is completed
   const units = allUnits.filter(u => u.taskSNs.every(sn => !isCompleted(sn)));
+
+  // ── Priority ordering ──────────────────────────────────────────────────────
+  // Build dependency structures to determine allocation priority:
+  //   1. Tasks with no dependencies come first (can start on day 1)
+  //   2. Among tasks at the same depth, tasks that more others depend on come first
+  //      (unblocking the most work earliest shortens the critical path)
+
+  // Direct deps per SN
+  const depsOf = new Map(tasks.map(t => {
+    const sn = snStr(t);
+    const deps = String(t["Depends On"] || "").split(/[,;]/).map(s => s.trim()).filter(s => s && s !== "0");
+    return [sn, deps];
+  }));
+
+  // Reverse map: sn → Set of SNs that directly depend on it
+  const directDependents = new Map(tasks.map(t => [snStr(t), new Set()]));
+  for (const t of tasks) {
+    const sn = snStr(t);
+    for (const dep of (depsOf.get(sn) || [])) {
+      if (directDependents.has(dep)) directDependents.get(dep).add(sn);
+    }
+  }
+
+  // Transitive dependent count: BFS from each node through the reverse map
+  const transitiveCount = new Map();
+  for (const t of tasks) {
+    const sn = snStr(t);
+    const visited = new Set();
+    const queue = [...directDependents.get(sn)];
+    while (queue.length > 0) {
+      const curr = queue.shift();
+      if (visited.has(curr)) continue;
+      visited.add(curr);
+      for (const next of directDependents.get(curr) || []) {
+        if (!visited.has(next)) queue.push(next);
+      }
+    }
+    transitiveCount.set(sn, visited.size);
+  }
+
+  // Topological depth (0 = no deps)
+  const depthCache = new Map();
+  const topoDepth = (sn, ancestors = new Set()) => {
+    if (depthCache.has(sn)) return depthCache.get(sn);
+    if (ancestors.has(sn)) return 0; // cycle guard
+    ancestors.add(sn);
+    const d = (depsOf.get(sn) || []).reduce((mx, dep) => Math.max(mx, topoDepth(dep, ancestors) + 1), 0);
+    depthCache.set(sn, d);
+    return d;
+  };
+  for (const t of tasks) topoDepth(snStr(t));
+
+  // Sort: shallower depth first; ties broken by most transitive dependents first
+  const priorityOrder = [...units].sort((a, b) => {
+    const da = depthCache.get(a.leadSN) || 0;
+    const db = depthCache.get(b.leadSN) || 0;
+    if (da !== db) return da - db;
+    return (transitiveCount.get(b.leadSN) || 0) - (transitiveCount.get(a.leadSN) || 0);
+  });
 
   const getEndDates = (assign) => {
     const scheduled = scheduleTasks(tasks, assign, holidays, vacMap, projectStart);
@@ -133,7 +194,7 @@ export function levelOptimize(tasks, resources, assignments, progress, holidays,
       tasks.filter(t => isCompleted(snStr(t))).map(t => [snStr(t), assignments[snStr(t)]])
     );
     next = { ...completedAssignments };
-    units.forEach((unit, idx) => {
+    priorityOrder.forEach((unit, idx) => {
       const assignee = resources[idx % resources.length];
       unit.taskSNs.forEach(sn => { next[sn] = assignee; });
     });
