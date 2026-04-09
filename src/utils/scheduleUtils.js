@@ -123,17 +123,7 @@ export function levelOptimize(tasks, resources, assignments, progress, holidays,
     }));
   };
 
-  const workdaysBetween = (a, b) => {
-    if (a >= b) return 0;
-    let count = 0;
-    const d = new Date(a);
-    const end = new Date(b);
-    while (d < end) {
-      d.setDate(d.getDate() + 1);
-      if (isWorkday(d, holidays, vacMap, null)) count++;
-    }
-    return count;
-  };
+  const maxOf = (ed) => Object.values(ed).reduce((mx, d) => d > mx ? d : mx, "");
 
   // If any resource has no tasks: assign all movable units round-robin
   const hasEmptyResource = resources.some(r => !tasks.some(t => assignments[snStr(t)] === r));
@@ -149,29 +139,37 @@ export function levelOptimize(tasks, resources, assignments, progress, holidays,
     });
   }
 
-  // Leveling loop: move first unit from most-loaded resource to any resource
-  // that is more than 5 working days behind the maximum finish date
-  let moved = true;
-  let maxIter = units.length * resources.length * 3;
-  while (moved && maxIter-- > 0) {
-    moved = false;
+  // Greedy makespan search: each iteration try every movable unit on the most-loaded
+  // resource against every other resource, keep the move that lowers the overall
+  // project finish date the most. Stop when no move helps.
+  let improved = true;
+  let maxIter = units.length * resources.length * 4;
+  while (improved && maxIter-- > 0) {
+    improved = false;
     const endDates = getEndDates(next);
-    const maxEnd = Object.values(endDates).reduce((mx, d) => d > mx ? d : mx, "");
+    const currentMax = maxOf(endDates);
+    const overloaded = resources.reduce((mx, r) => endDates[r] > endDates[mx] ? r : mx, resources[0]);
 
-    for (const resource of resources) {
-      if (endDates[resource] >= maxEnd) continue;
-      if (workdaysBetween(endDates[resource], maxEnd) <= 5) continue;
+    let bestMax = currentMax;
+    let bestAssign = null;
 
-      const overloaded = resources.reduce((mx, r) => endDates[r] > endDates[mx] ? r : mx, resources[0]);
-      const snap = next;
-      const candidates = units.filter(u => snap[u.leadSN] === overloaded);
-      if (candidates.length === 0) continue;
+    const snap = next;
+    for (const unit of units.filter(u => snap[u.leadSN] === overloaded)) {
+      for (const target of resources) {
+        if (target === overloaded) continue;
+        const trial = { ...snap };
+        unit.taskSNs.forEach(sn => { trial[sn] = target; });
+        const trialMax = maxOf(getEndDates(trial));
+        if (trialMax < bestMax) {
+          bestMax = trialMax;
+          bestAssign = trial;
+        }
+      }
+    }
 
-      const trial = { ...next };
-      for (const sn of candidates[0].taskSNs) trial[sn] = resource;
-      next = trial;
-      moved = true;
-      break;
+    if (bestAssign) {
+      next = bestAssign;
+      improved = true;
     }
   }
 
