@@ -48,6 +48,16 @@ function makeStatusColor(theme) {
   };
 }
 
+// Amber heat scale: 0 dependents = neutral gray, rising through yellow → orange → red
+const HEAT_COLORS = {
+  dark:  ["#6b7280", "#fde047", "#fb923c", "#f97316", "#ef4444", "#dc2626"],
+  light: ["#9ca3af", "#ca8a04", "#d97706", "#ea580c", "#dc2626", "#b91c1c"],
+};
+function heatColor(count = 0, theme = "dark") {
+  const palette = HEAT_COLORS[theme] || HEAT_COLORS.dark;
+  return palette[Math.min(count, palette.length - 1)];
+}
+
 function statusColor(s = "", theme = "dark") {
   return makeStatusColor(theme)[s.toLowerCase()] || THEMES[theme].muted;
 }
@@ -337,6 +347,18 @@ export default function GanttApp() {
     filterCategory === "All" ? rawTasks : rawTasks.filter((t) => t["Category"] === filterCategory),
     [rawTasks, filterCategory]);
 
+  // Count how many tasks directly depend on each task (used for heat coloring)
+  const dependentCount = useMemo(() => {
+    const counts = {};
+    for (const t of filteredRaw) {
+      const sn = String(t["Serial Number"]);
+      if (!counts[sn]) counts[sn] = 0;
+      const deps = String(t["Depends On"] || "").split(/[,;]/).map(s => s.trim()).filter(s => s && s !== "0");
+      for (const dep of deps) counts[dep] = (counts[dep] || 0) + 1;
+    }
+    return counts;
+  }, [filteredRaw]);
+
   const scheduledTasks = useMemo(() =>
     scheduleTasks(filteredRaw, assignments, holidays, vacMap, projectStart),
     [filteredRaw, assignments, holidays, vacMap, projectStart]);
@@ -603,6 +625,16 @@ export default function GanttApp() {
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: C.bg, color: C.text, fontFamily: "'DM Sans', sans-serif", overflow: "hidden" }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500&family=DM+Sans:wght@300;400;600&display=swap" rel="stylesheet" />
+      <style>{`
+        input[type="date"]::-webkit-calendar-picker-indicator {
+          filter: invert(1) sepia(1) saturate(3) hue-rotate(${themeKey === "dark" ? "195deg" : "210deg"});
+          opacity: 0.8;
+          cursor: pointer;
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator:hover {
+          opacity: 1;
+        }
+      `}</style>
 
       {/* Top bar */}
       <div style={{ display: "flex", alignItems: "center", padding: "0 20px", height: 52, borderBottom: `1px solid ${C.border}`, gap: 20, flexShrink: 0, background: C.surface }}>
@@ -747,7 +779,8 @@ export default function GanttApp() {
                     const w = taskW(task);
                     const pct = progress[task["Serial Number"]] ?? 0;
                     const isTest = isTestTask(task["Description"]);
-                    const col = isTest ? C.purple : statusColor(getStatus(task["Serial Number"]), themeKey);
+                    const sn = task["Serial Number"];
+                    const col = isTest ? C.purple : heatColor(dependentCount[sn] || 0, themeKey);
                     return (
                       <div key={task["Serial Number"]} style={{
                         height: rowH, position: "relative",
@@ -908,7 +941,7 @@ export default function GanttApp() {
                       const isDragging = draggingTask?.sn === sn;
                       const isCtxOpen = contextMenu?.sn === sn;
                       const isTest = isTestTask(t["Description"]);
-                      const taskColor = isTest ? C.purple : sc;
+                      const taskColor = isTest ? C.purple : heatColor(dependentCount[sn] || 0, themeKey);
                       const completed = isTaskCompleted(sn);
                       return (
                         <div
@@ -923,8 +956,8 @@ export default function GanttApp() {
                           }}
                           style={{
                             display: "flex", gap: 8, alignItems: "center",
-                            background: completed ? C.green + "18" : isCtxOpen ? C.accentDim : isDragging ? C.accentDim : isTest ? C.purple + "18" : C.surface,
-                            border: `1px solid ${completed ? C.green + "88" : isCtxOpen ? C.accent : isDragging ? C.accent : isTest ? C.purple + "88" : C.border}`,
+                            background: completed ? C.green + "18" : isCtxOpen ? C.accentDim : isDragging ? C.accentDim : isTest ? C.purple + "18" : taskColor + "18",
+                            border: `1px solid ${completed ? C.green + "88" : isCtxOpen ? C.accent : isDragging ? C.accent : isTest ? C.purple + "88" : taskColor + "55"}`,
                             borderRadius: 6, padding: "6px 10px",
                             cursor: completed ? "default" : "grab", opacity: isDragging ? 0.5 : 1,
                             transition: "opacity 0.15s, border-color 0.15s, background 0.15s",
@@ -1070,7 +1103,7 @@ export default function GanttApp() {
 
             <div>
               <SLabel C={C}>PROJECT START DATE</SLabel>
-              <input type="date" value={projectStart} onChange={(e) => setProjectStart(e.target.value)} style={makeIStyle(C)} />
+              <input type="date" value={projectStart} onChange={(e) => { if (e.target.value) setProjectStart(e.target.value); }} style={makeIStyle(C)} />
             </div>
 
             <div>

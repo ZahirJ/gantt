@@ -43,8 +43,11 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 
 ### ⚡ Optimization
 - The Optimize button redistributes tasks to balance workload and shorten the overall project finish date
-- Only tasks whose Description starts with `Add test` or `Add tests` are eligible to move
-- **Completed tasks are never moved** — their assignments are locked regardless of optimizer settings
+- Tasks are grouped into **units** (a non-test task + all test tasks that depend on it) and always move together
+- Units are allocated in **priority order**: tasks with no dependencies first, then tasks that the most other tasks depend on — critical-path work starts as early as possible
+- The optimizer tries every possible unit move each iteration and picks whichever gives the lowest overall finish date (greedy makespan minimization)
+- **Completed tasks are never moved** — their assignments are locked
+- **Tasks with Status = Completed are excluded on import** — they do not appear in the Gantt
 - Dependencies are respected; the full scheduling engine (calendar-aware) is used to compare outcomes
 - Undo restores the pre-optimization assignments
 
