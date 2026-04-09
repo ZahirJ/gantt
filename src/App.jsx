@@ -267,7 +267,8 @@ export default function GanttApp() {
     }));
   }
 
-  function loadTasks(tasks) {
+  function loadTasks(allTasks) {
+    const tasks = allTasks.filter(t => (t["Status"] || "").toLowerCase() !== "completed");
     setRawTasks(tasks);
     const a = {};
     tasks.forEach((t) => { if (t["Assignee"]) a[t["Serial Number"]] = t["Assignee"]; });
