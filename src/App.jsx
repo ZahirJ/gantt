@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef } from "react";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
+import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize } from "./utils/scheduleUtils";
 
 // ── Themes ─────────────────────────────────────────────────────────────────────
 const THEMES = {
@@ -58,66 +59,140 @@ function isTestTask(desc = "") {
 }
 
 // ── File parsing ───────────────────────────────────────────────────────────────
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+// Convert an ExcelJS cell to a plain string (equivalent to SheetJS raw:false)
+function cellStr(cell) {
+  if (!cell || cell.value === null || cell.value === undefined) return "";
+  if (cell.value instanceof Object && cell.value.richText) {
+    return cell.value.richText.map((r) => r.text).join("");
+  }
+  if (cell.value instanceof Date) return fmtDate(cell.value);
+  return String(cell.value);
+}
+
+// Convert an ExcelJS worksheet to array-of-objects (header row = keys)
+function wsToJson(ws) {
+  const headers = [];
+  const rows = [];
+  ws.eachRow({ includeEmpty: true }, (row, rowNum) => {
+    if (rowNum === 1) {
+      row.eachCell({ includeEmpty: true }, (cell, col) => { headers[col] = cellStr(cell); });
+    } else {
+      const obj = {};
+      row.eachCell({ includeEmpty: true }, (cell, col) => { if (headers[col]) obj[headers[col]] = cellStr(cell); });
+      rows.push(obj);
+    }
+  });
+  return rows;
+}
+
+// Convert an ExcelJS worksheet to array-of-arrays (for session key-value parsing)
+function wsToAoa(ws) {
+  const rows = [];
+  ws.eachRow({ includeEmpty: true }, (row) => {
+    const arr = [];
+    row.eachCell({ includeEmpty: true }, (cell, col) => { arr[col - 1] = cellStr(cell); });
+    rows.push(arr);
+  });
+  return rows;
+}
+
+// Minimal RFC-4180 CSV parser
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/);
+  const parse = (line) => {
+    const fields = [];
+    let field = "", inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (inQ && line[i + 1] === '"') { field += '"'; i++; } else { inQ = !inQ; } }
+      else if (c === ',' && !inQ) { fields.push(field); field = ""; }
+      else field += c;
+    }
+    fields.push(field);
+    return fields;
+  };
+  const nonEmpty = lines.filter((l) => l.trim());
+  if (!nonEmpty.length) return [];
+  const headers = parse(nonEmpty[0]);
+  return nonEmpty.slice(1).map((line) => {
+    const vals = parse(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = vals[i] ?? ""; });
+    return obj;
+  });
+}
+
 function parseFile(file, callback) {
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      const wb = XLSX.read(e.target.result, { type: "array" });
+  if (file.size > MAX_FILE_SIZE) {
+    callback(new Error(`File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum allowed size is 10 MB.`));
+    return;
+  }
 
-      // ── Detect session XLSX ──
-      if (wb.SheetNames.includes("Session") && wb.SheetNames.includes("Schedule")) {
-        const schedWS = wb.Sheets["Schedule"];
-        const sessWS = wb.Sheets["Session"];
-        const schedRows = XLSX.utils.sheet_to_json(schedWS, { defval: "", raw: false });
-        const sessRaw = XLSX.utils.sheet_to_json(sessWS, { defval: "", raw: false, header: 1 });
+  (async () => {
+    const arrayBuffer = await file.arrayBuffer();
 
-        const tasks = normalizeTasks(schedRows);
+    // ── CSV ──
+    if (/\.csv$/i.test(file.name)) {
+      const rows = parseCSV(new TextDecoder().decode(arrayBuffer));
+      callback(null, normalizeTasks(rows), null);
+      return;
+    }
 
-        // Parse session sheet
-        const session = { projectStart: null, themeKey: null, resources: [], holidays: [], vacMap: {}, assignments: {}, progress: {} };
-        let mode = null;
-        for (const row of sessRaw) {
-          const cell0 = String(row[0] ?? "").trim();
-          const cell1 = String(row[1] ?? "").trim();
-          const cell2 = String(row[2] ?? "").trim();
-          if (cell0 === "PROJECT START") { session.projectStart = cell1; continue; }
-          if (cell0 === "THEME") { session.themeKey = cell1; continue; }
-          if (cell0 === "RESOURCES") { mode = "resources"; continue; }
-          if (cell0 === "PUBLIC HOLIDAYS") { mode = "holidays"; continue; }
-          if (cell0 === "VACATION DAYS") { mode = "vacations"; continue; }
-          if (cell0 === "ASSIGNMENTS") { mode = "assignments"; continue; }
-          if (cell0 === "PROGRESS") { mode = "progress"; continue; }
-          if (!cell0 && !cell1 && !cell2) { mode = null; continue; }
-          if (mode === "resources" && cell0) session.resources.push(cell0);
-          if (mode === "holidays" && cell0) session.holidays.push(cell0);
-          if (mode === "vacations" && cell1 && cell2) {
-            if (!session.vacMap[cell1]) session.vacMap[cell1] = [];
-            session.vacMap[cell1].push(cell2);
-          }
-          if (mode === "assignments" && cell1) session.assignments[cell1] = cell2;
-          if (mode === "progress" && cell1) session.progress[cell1] = Number(cell2);
+    // ── XLSX ──
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(arrayBuffer);
+
+    const sheetNames = wb.worksheets.map((ws) => ws.name);
+
+    // ── Detect session XLSX ──
+    if (sheetNames.includes("Session") && sheetNames.includes("Schedule")) {
+      const schedRows = wsToJson(wb.getWorksheet("Schedule"));
+      const sessRaw = wsToAoa(wb.getWorksheet("Session"));
+      const tasks = normalizeTasks(schedRows);
+
+      const session = { projectStart: null, themeKey: null, resources: [], holidays: [], vacMap: {}, assignments: {}, progress: {}, statuses: {} };
+      let mode = null;
+      for (const row of sessRaw) {
+        const cell0 = String(row[0] ?? "").trim();
+        const cell1 = String(row[1] ?? "").trim();
+        const cell2 = String(row[2] ?? "").trim();
+        if (cell0 === "PROJECT START") { session.projectStart = cell1; continue; }
+        if (cell0 === "THEME") { session.themeKey = cell1; continue; }
+        if (cell0 === "RESOURCES") { mode = "resources"; continue; }
+        if (cell0 === "PUBLIC HOLIDAYS") { mode = "holidays"; continue; }
+        if (cell0 === "VACATION DAYS") { mode = "vacations"; continue; }
+        if (cell0 === "ASSIGNMENTS") { mode = "assignments"; continue; }
+        if (cell0 === "PROGRESS") { mode = "progress"; continue; }
+        if (cell0 === "STATUSES") { mode = "statuses"; continue; }
+        if (!cell0 && !cell1 && !cell2) { mode = null; continue; }
+        if (mode === "resources" && cell0) session.resources.push(cell0);
+        if (mode === "holidays" && cell0) session.holidays.push(cell0);
+        if (mode === "vacations" && cell1 && cell2) {
+          if (!session.vacMap[cell1]) session.vacMap[cell1] = [];
+          session.vacMap[cell1].push(cell2);
         }
-
-        // Override progress from Schedule sheet Progress % column
-        schedRows.forEach((r) => {
-          const sn = String(r["Serial Number"] ?? "").trim();
-          const pct = Number(r["Progress %"]);
-          if (sn && !isNaN(pct)) session.progress[sn] = pct;
-        });
-
-        callback(null, tasks, session);
-        return;
+        if (mode === "assignments" && cell1) session.assignments[cell1] = cell2;
+        if (mode === "progress" && cell1) session.progress[cell1] = Number(cell2);
+        if (mode === "statuses" && cell1) session.statuses[cell1] = cell2;
       }
 
-      // ── Regular task file ──
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: "", raw: false });
-      callback(null, normalizeTasks(rows), null);
-    } catch (err) {
-      callback(err);
+      schedRows.forEach((r) => {
+        const sn = String(r["Serial Number"] ?? "").trim();
+        const pct = Number(r["Progress %"]);
+        if (sn && !isNaN(pct)) session.progress[sn] = pct;
+      });
+
+      callback(null, tasks, session);
+      return;
     }
-  };
-  reader.readAsArrayBuffer(file);
+
+    // ── Regular task file ──
+    const rows = wsToJson(wb.worksheets[0]);
+    callback(null, normalizeTasks(rows), null);
+  })().catch(callback);
 }
 
 function normalizeTasks(rows) {
@@ -127,8 +202,10 @@ function normalizeTasks(rows) {
     if (!serial || serial.startsWith("=") || isNaN(Number(serial))) serial = String(idx + 1);
 
     // Depends On: 0 or "" = no dependency; otherwise comma/semicolon list of serials
-    let depsRaw = String(row["Depends On"] ?? "").trim();
-    const deps = depsRaw.split(/[,;]+/).map((s) => s.trim()).filter((s) => s && s !== "0").join(",");
+    // Accept any capitalisation of the column name
+    const depsCol = row["Depends On"] ?? row["Depends on"] ?? row["depends on"] ?? row["depends_on"] ?? "";
+    let depsRaw = String(depsCol).trim();
+    const deps = depsRaw.split(/[,;]+/).map((s) => s.trim()).filter((s) => s && s !== "0" && s !== serial).join(",");
 
     const days = parseInt(row["Days"]) || SIZE_DAYS[String(row["Complexity"]).trim()] || 1;
 
@@ -144,82 +221,7 @@ function normalizeTasks(rows) {
 }
 
 // ── Scheduling helpers ─────────────────────────────────────────────────────────
-function fmtDate(d) { return new Date(d).toISOString().slice(0, 10); }
-
-function isWorkday(date, holidays, vacMap, person) {
-  const dow = date.getDay();
-  if (dow === 0 || dow === 6) return false;
-  const iso = fmtDate(date);
-  if (holidays.includes(iso)) return false;
-  if (person && vacMap[person]?.includes(iso)) return false;
-  return true;
-}
-
-function nextWorkday(date, holidays, vacMap, person) {
-  const d = new Date(date);
-  while (!isWorkday(d, holidays, vacMap, person)) d.setDate(d.getDate() + 1);
-  return d;
-}
-
-function addWorkdays(date, extraDays, holidays, vacMap, person) {
-  let d = new Date(date);
-  let added = 0;
-  while (added < extraDays) {
-    d.setDate(d.getDate() + 1);
-    if (isWorkday(d, holidays, vacMap, person)) added++;
-  }
-  return d;
-}
-
-function scheduleTasks(rawTasks, assignments, holidays, vacMap, projectStart) {
-  const tasks = rawTasks.map((t) => ({ ...t, _start: null, _end: null }));
-  const done = new Set();
-  let safety = tasks.length * 4;
-
-  while (done.size < tasks.length && safety-- > 0) {
-    for (const task of tasks) {
-      const sn = task["Serial Number"];
-      if (done.has(sn)) continue;
-      const deps = (task["Depends On"] || "").split(",").map((s) => s.trim()).filter(Boolean);
-      if (!deps.every((d) => done.has(d))) continue;
-
-      // earliest start from dependency ends
-      let earliest = new Date(projectStart);
-      for (const depSN of deps) {
-        const dep = tasks.find((t) => t["Serial Number"] === depSN);
-        if (dep?._end) {
-          const de = new Date(dep._end);
-          de.setDate(de.getDate() + 1); // day after dep ends
-          if (de > earliest) earliest = new Date(de);
-        }
-      }
-
-      // person's next free day
-      const person = assignments[sn] || null;
-      let personFree = new Date(projectStart);
-      if (person) {
-        tasks.forEach((t) => {
-          if (t["Serial Number"] !== sn && assignments[t["Serial Number"]] === person && t._end) {
-            const te = new Date(t._end);
-            te.setDate(te.getDate() + 1);
-            if (te > personFree) personFree = new Date(te);
-          }
-        });
-      }
-
-      let start = new Date(Math.max(earliest.getTime(), personFree.getTime()));
-      start = nextWorkday(start, holidays, vacMap, person);
-
-      const days = parseInt(task["Days"]) || 1;
-      const end = days > 1 ? addWorkdays(start, days - 1, holidays, vacMap, person) : new Date(start);
-
-      task._start = fmtDate(start);
-      task._end = fmtDate(end);
-      done.add(sn);
-    }
-  }
-  return tasks;
-}
+// fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks imported from ./utils/scheduleUtils
 
 // ── Week number ────────────────────────────────────────────────────────────────
 function getWeek(d) {
@@ -237,6 +239,7 @@ export default function GanttApp() {
   const [holidays, setHolidays] = useState([]);
   const [vacMap, setVacMap] = useState({});
   const [progress, setProgress] = useState({});
+  const [taskStatuses, setTaskStatuses] = useState({});
   const [tab, setTab] = useState("gantt");
   const [zoom, setZoom] = useState("week");
   const [dragOver, setDragOver] = useState(false);
@@ -251,16 +254,36 @@ export default function GanttApp() {
   const [dragOverPerson, setDragOverPerson] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { sn, x, y, currentPerson }
 
+  const TASK_STATUSES = ["Open", "In Progress", "Completed", "Open(May not need fix)"];
+
+  const getStatus = (sn) => taskStatuses[String(sn)] ?? "Open";
+  const isTaskCompleted = (sn) => getStatus(String(sn)) === "Completed";
+
+  function setTaskStatus(sn, newStatus) {
+    setTaskStatuses(s => ({ ...s, [String(sn)]: newStatus }));
+    setProgress(p => ({
+      ...p,
+      [String(sn)]: newStatus === "Completed" ? 100 : newStatus === "In Progress" ? Math.max(p[String(sn)] ?? 0, 10) : 0,
+    }));
+  }
+
   function loadTasks(tasks) {
     setRawTasks(tasks);
     const a = {};
     tasks.forEach((t) => { if (t["Assignee"]) a[t["Serial Number"]] = t["Assignee"]; });
     setAssignments(a);
+    const s = {};
     const p = {};
     tasks.forEach((t) => {
-      const s = (t["Status"] || "").toLowerCase();
-      p[t["Serial Number"]] = s === "completed" ? 100 : s === "in progress" ? 50 : 0;
+      const raw = (t["Status"] || "Open");
+      // Normalize to canonical status labels
+      const normalized = raw.toLowerCase() === "completed" ? "Completed"
+        : raw.toLowerCase() === "in progress" ? "In Progress"
+        : raw;
+      s[t["Serial Number"]] = normalized;
+      p[t["Serial Number"]] = normalized === "Completed" ? 100 : normalized === "In Progress" ? 50 : 0;
     });
+    setTaskStatuses(s);
     setProgress(p);
     const people = [...new Set(tasks.map((t) => t["Assignee"]).filter(Boolean))];
     setResources((prev) => [...new Set([...prev, ...people])]);
@@ -276,6 +299,18 @@ export default function GanttApp() {
         setRawTasks(tasks);
         setAssignments(session.assignments);
         setProgress(session.progress);
+        // Restore statuses: use saved statuses if present, else derive from progress
+        if (Object.keys(session.statuses || {}).length > 0) {
+          setTaskStatuses(session.statuses);
+        } else {
+          const derived = {};
+          tasks.forEach((t) => {
+            const sn = t["Serial Number"];
+            const pct = session.progress[sn] ?? 0;
+            derived[sn] = pct >= 100 ? "Completed" : pct > 0 ? "In Progress" : (t["Status"] || "Open");
+          });
+          setTaskStatuses(derived);
+        }
         if (session.projectStart) setProjectStart(session.projectStart);
         if (session.themeKey) setThemeKey(session.themeKey);
         if (session.resources.length) setResources(session.resources);
@@ -354,16 +389,24 @@ export default function GanttApp() {
   const todayIdx = workDates.findIndex((d) => fmtDate(d) >= fmtDate(new Date()));
 
   function getArrows() {
+    const snIndex = new Map(scheduledTasks.map((t, i) => [t["Serial Number"], i]));
     const arrows = [];
     scheduledTasks.forEach((task, ti) => {
-      (task["Depends On"] || "").split(",").map((s) => s.trim()).filter(Boolean).forEach((depSN) => {
-        const dep = scheduledTasks.find((t) => t["Serial Number"] === depSN);
-        if (!dep?._end) return;
-        const fx = taskX(dep) + taskW(dep);
-        const fy = scheduledTasks.indexOf(dep) * rowH + rowH / 2;
-        const tx = taskX(task);
-        const ty = ti * rowH + rowH / 2;
-        arrows.push({ fx, fy, tx, ty, key: `${depSN}->${task["Serial Number"]}` });
+      const rawDeps = task["Depends On"] || "";
+      rawDeps.split(",").map((s) => s.trim()).filter(Boolean).forEach((depSN) => {
+        // Normalise: strip decimals SheetJS may add (e.g. "22.0" → "22")
+        const normDep = String(parseFloat(depSN) || depSN);
+        const di = snIndex.get(normDep) ?? snIndex.get(depSN);
+        if (di === undefined) return;
+        const dep = scheduledTasks[di];
+        if (!dep._end) return;
+        arrows.push({
+          fx: taskX(dep) + taskW(dep),
+          fy: di * rowH + rowH / 2,
+          tx: taskX(task),
+          ty: ti * rowH + rowH / 2,
+          key: `${depSN}->${task["Serial Number"]}`,
+        });
       });
     });
     return arrows;
@@ -414,89 +457,7 @@ export default function GanttApp() {
 
   function optimizeAndRedistributeTasks() {
     setUndoHistory(h => [...h, { assignments: { ...assignments } }]);
-
-    const isTest = (t) => /^add tests?\b/i.test(String(t["Description"] || "").trim());
-    const snStr = (t) => String(t["Serial Number"]);
-    const snMap = new Map(filteredRaw.map(t => [snStr(t), t]));
-
-    // Map each test task to its lead: the first non-test task it directly depends on
-    const testToLead = new Map();
-    for (const task of filteredRaw) {
-      if (!isTest(task)) continue;
-      const deps = String(task["Depends On"] || "").split(/[,;]/).map(s => s.trim()).filter(s => s && s !== "0");
-      const leadSN = deps.find(sn => { const d = snMap.get(sn); return d && !isTest(d); });
-      if (leadSN) testToLead.set(snStr(task), leadSN);
-    }
-
-    // Build units (lead task + its test dependents) in serial number order
-    const units = filteredRaw
-      .filter(t => !(isTest(t) && testToLead.has(snStr(t))))
-      .map(t => {
-        const sn = snStr(t);
-        const testSNs = filteredRaw.filter(x => isTest(x) && testToLead.get(snStr(x)) === sn).map(snStr);
-        return { leadSN: sn, taskSNs: [sn, ...testSNs] };
-      });
-
-    // If any resource has no tasks: assign all units round-robin in serial number order
-    const hasEmptyResource = resources.some(r => !filteredRaw.some(t => assignments[snStr(t)] === r));
-    let next = { ...assignments };
-    if (hasEmptyResource) {
-      next = {};
-      units.forEach((unit, idx) => {
-        const assignee = resources[idx % resources.length];
-        unit.taskSNs.forEach(sn => { next[sn] = assignee; });
-      });
-    }
-
-    // Compute finish date per resource using the real scheduling engine
-    const getEndDates = (assign) => {
-      const scheduled = scheduleTasks(filteredRaw, assign, holidays, vacMap, projectStart);
-      return Object.fromEntries(resources.map(r => {
-        const rTasks = scheduled.filter(t => assign[snStr(t)] === r && t._end);
-        return [r, rTasks.length > 0 ? rTasks.reduce((mx, t) => t._end > mx ? t._end : mx, "") : projectStart];
-      }));
-    };
-
-    // Count working days between two ISO date strings
-    const workdaysBetween = (a, b) => {
-      if (a >= b) return 0;
-      let count = 0;
-      const d = new Date(a);
-      const end = new Date(b);
-      while (d < end) {
-        d.setDate(d.getDate() + 1);
-        if (isWorkday(d, holidays, vacMap, null)) count++;
-      }
-      return count;
-    };
-
-    // Leveling loop: move first unit from most-loaded resource to any resource
-    // that is more than 5 working days behind the maximum finish date
-    let moved = true;
-    let maxIter = units.length * resources.length * 3;
-    while (moved && maxIter-- > 0) {
-      moved = false;
-      const endDates = getEndDates(next);
-      const maxEnd = Object.values(endDates).reduce((mx, d) => d > mx ? d : mx, "");
-
-      for (const resource of resources) {
-        if (endDates[resource] >= maxEnd) continue;
-        if (workdaysBetween(endDates[resource], maxEnd) <= 5) continue;
-
-        // Take the first unit from the most-loaded resource and give it to this one
-        const overloaded = resources.reduce((mx, r) => endDates[r] > endDates[mx] ? r : mx, resources[0]);
-        const snap = next;
-        const candidates = units.filter(u => snap[u.leadSN] === overloaded);
-        if (candidates.length === 0) continue;
-
-        const trial = { ...next };
-        for (const sn of candidates[0].taskSNs) trial[sn] = resource;
-        next = trial;
-        moved = true;
-        break;
-      }
-    }
-
+    const next = levelOptimize(filteredRaw, resources, assignments, progress, holidays, vacMap, projectStart);
     setAssignments(next);
   }
 
@@ -511,7 +472,7 @@ export default function GanttApp() {
     const headers = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Integration Effort"];
     const rows = scheduledTasks.map((t) => [
       t["Serial Number"], t["Category"], t["Description"], t["Depends On"],
-      t["Status"], t["Complexity"], t["Days"], t._start, t._end,
+      getStatus(t["Serial Number"]), t["Complexity"], t["Days"], t._start, t._end,
       assignments[t["Serial Number"]] || "", t["Integration Effort"],
     ]);
     const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -521,25 +482,22 @@ export default function GanttApp() {
     a.click();
   }
 
-  function exportXLSX() {
-    const wb = XLSX.utils.book_new();
+  async function exportXLSX() {
+    const wb = new ExcelJS.Workbook();
 
     // ── Sheet 1: Schedule ──
     const scheduleHeaders = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Integration Effort"];
     const scheduleRows = scheduledTasks.map((t) => [
       t["Serial Number"], t["Category"], t["Description"], t["Depends On"],
-      t["Status"], t["Complexity"], t["Days"], t._start, t._end,
+      getStatus(t["Serial Number"]), t["Complexity"], t["Days"], t._start, t._end,
       assignments[t["Serial Number"]] || "",
       progress[t["Serial Number"]] ?? 0,
       t["Integration Effort"],
     ]);
-    const scheduleWS = XLSX.utils.aoa_to_sheet([scheduleHeaders, ...scheduleRows]);
-    // Column widths
-    scheduleWS["!cols"] = [
-      { wch: 14 }, { wch: 22 }, { wch: 50 }, { wch: 14 }, { wch: 14 },
-      { wch: 12 }, { wch: 8 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 18 },
-    ];
-    XLSX.utils.book_append_sheet(wb, scheduleWS, "Schedule");
+    const schedWS = wb.addWorksheet("Schedule");
+    schedWS.addRow(scheduleHeaders);
+    scheduleRows.forEach((r) => schedWS.addRow(r));
+    [14, 22, 50, 14, 14, 12, 8, 12, 12, 16, 12, 18].forEach((w, i) => { schedWS.getColumn(i + 1).width = w; });
 
     // ── Sheet 2: Session (everything needed to restore state) ──
     const sessionRows = [
@@ -564,19 +522,29 @@ export default function GanttApp() {
       [],
       ["PROGRESS", "Serial Number", "Percent"],
       ...Object.entries(progress).map(([sn, pct]) => ["", sn, pct]),
+      [],
+      ["STATUSES", "Serial Number", "Status"],
+      ...Object.entries(taskStatuses).map(([sn, st]) => ["", sn, st]),
     ];
-    const sessionWS = XLSX.utils.aoa_to_sheet(sessionRows);
-    sessionWS["!cols"] = [{ wch: 30 }, { wch: 20 }, { wch: 20 }];
-    XLSX.utils.book_append_sheet(wb, sessionWS, "Session");
+    const sessWS = wb.addWorksheet("Session");
+    sessionRows.forEach((r) => sessWS.addRow(r));
+    [30, 20, 20].forEach((w, i) => { sessWS.getColumn(i + 1).width = w; });
 
     // ── Sheet 3: Workload summary ──
     const workloadHeaders = ["Person", "Tasks", "Total Days", "Finishes"];
     const workloadRows = workloadData.map((w) => [w.person, w.tasks.length, w.totalDays, w.finish]);
-    const workloadWS = XLSX.utils.aoa_to_sheet([workloadHeaders, ...workloadRows]);
-    workloadWS["!cols"] = [{ wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 14 }];
-    XLSX.utils.book_append_sheet(wb, workloadWS, "Workload");
+    const wlWS = wb.addWorksheet("Workload");
+    wlWS.addRow(workloadHeaders);
+    workloadRows.forEach((r) => wlWS.addRow(r));
+    [20, 10, 12, 14].forEach((w, i) => { wlWS.getColumn(i + 1).width = w; });
 
-    XLSX.writeFile(wb, "gantt_session.xlsx");
+    const buffer = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "gantt_session.xlsx";
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   if (screen === "import") {
@@ -609,7 +577,7 @@ export default function GanttApp() {
             <div style={{ fontSize: 48, marginBottom: 16 }}>📂</div>
             <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 16 }}>Drop your .xlsx or .csv file here</div>
             <div style={{ color: C.muted, fontSize: 13 }}>or click to browse</div>
-            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => handleFile(e.target.files[0])} />
+            <input ref={fileRef} type="file" accept=".xlsx,.csv" style={{ display: "none" }} onChange={(e) => handleFile(e.target.files[0])} />
           </div>
 
           <div style={{ fontSize: 11, color: C.muted, background: C.surface, borderRadius: 10, padding: "16px 20px", textAlign: "left", border: `1px solid ${C.border}` }}>
@@ -699,22 +667,33 @@ export default function GanttApp() {
                   <span style={{ fontSize: 10, color: C.muted, width: 28, textAlign: "right" }}>Days</span>
                 </div>
                 {scheduledTasks.map((task, i) => {
-                  const sc = statusColor(task["Status"], themeKey);
+                  const sn = task["Serial Number"];
+                  const currentStatus = getStatus(sn);
+                  const sc = statusColor(currentStatus, themeKey);
+                  const completed = isTaskCompleted(sn);
                   return (
-                    <div key={task["Serial Number"]} style={{
+                    <div key={sn} style={{
                       height: rowH, display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
                       borderBottom: `1px solid ${C.border}18`,
-                      background: i % 2 === 0 ? "transparent" : C.surface + "55",
+                      background: completed ? C.green + "0d" : i % 2 === 0 ? "transparent" : C.surface + "55",
                     }}>
-                      <span style={{ width: 26, fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{task["Serial Number"]}</span>
+                      <span style={{ width: 26, fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{sn}</span>
                       <div style={{ flex: 1, overflow: "hidden" }}>
-                        <div style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={task["Description"]}>{task["Description"]}</div>
-                        <div style={{ fontSize: 9, color: sc, marginTop: 1 }}>{task["Status"]}</div>
+                        <div style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: completed ? C.muted : C.text }} title={task["Description"]}>{task["Description"]}</div>
+                        <select
+                          value={currentStatus}
+                          onChange={(e) => setTaskStatus(sn, e.target.value)}
+                          style={{ fontSize: 9, color: sc, background: "transparent", border: "none", padding: 0, cursor: "pointer", fontFamily: "'DM Sans', sans-serif", marginTop: 1 }}
+                        >
+                          {TASK_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
                       </div>
                       <select
-                        value={assignments[task["Serial Number"]] || ""}
-                        onChange={(e) => setAssignments((a) => ({ ...a, [task["Serial Number"]]: e.target.value }))}
-                        style={{ width: 86, background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 4, fontSize: 10, padding: "2px 4px", flexShrink: 0 }}                      >
+                        value={assignments[sn] || ""}
+                        onChange={(e) => setAssignments((a) => ({ ...a, [sn]: e.target.value }))}
+                        disabled={completed}
+                        style={{ width: 86, background: C.card, border: `1px solid ${C.border}`, color: completed ? C.muted : C.text, borderRadius: 4, fontSize: 10, padding: "2px 4px", flexShrink: 0, opacity: completed ? 0.5 : 1 }}
+                      >
                         <option value="">— unset</option>
                         {resources.map((r) => <option key={r} value={r}>{r}</option>)}
                       </select>
@@ -746,8 +725,8 @@ export default function GanttApp() {
                   ))}
                 </div>
 
-                {/* SVG: grid + arrows + today */}
-                <svg style={{ position: "absolute", top: 56, left: 0, pointerEvents: "none", overflow: "visible" }} width={totalW} height={totalH}>
+                {/* SVG: grid lines + today (behind bars) */}
+                <svg style={{ position: "absolute", top: 56, left: 0, pointerEvents: "none" }} width={totalW} height={totalH}>
                   {workDates.map((_, i) => (
                     <line key={i} x1={i * colW} y1={0} x2={i * colW} y2={totalH} stroke={C.border} strokeWidth={0.4} strokeOpacity={0.5} />
                   ))}
@@ -758,17 +737,6 @@ export default function GanttApp() {
                     <line x1={todayIdx * colW} y1={0} x2={todayIdx * colW} y2={totalH}
                       stroke={C.yellow} strokeWidth={1.5} strokeDasharray="4 3" strokeOpacity={0.75} />
                   )}
-                  {getArrows().map((a) => {
-                    const cx = a.fx + Math.min(colW * 2, Math.abs(a.tx - a.fx) / 2);
-                    return (
-                      <g key={a.key}>
-                        <path d={`M${a.fx},${a.fy} C${cx},${a.fy} ${cx},${a.ty} ${a.tx},${a.ty}`}
-                          fill="none" stroke={C.purple} strokeWidth={1.2} strokeOpacity={0.5} />
-                        <polygon points={`${a.tx},${a.ty} ${a.tx - 5},${a.ty - 3} ${a.tx - 5},${a.ty + 3}`}
-                          fill={C.purple} fillOpacity={0.5} />
-                      </g>
-                    );
-                  })}
                 </svg>
 
                 {/* Bars */}
@@ -778,7 +746,7 @@ export default function GanttApp() {
                     const w = taskW(task);
                     const pct = progress[task["Serial Number"]] ?? 0;
                     const isTest = isTestTask(task["Description"]);
-                    const col = isTest ? C.purple : statusColor(task["Status"], themeKey);
+                    const col = isTest ? C.purple : statusColor(getStatus(task["Serial Number"]), themeKey);
                     return (
                       <div key={task["Serial Number"]} style={{
                         height: rowH, position: "relative",
@@ -810,6 +778,31 @@ export default function GanttApp() {
                     );
                   })}
                 </div>
+
+                {/* SVG: dependency arrows (above bars) */}
+                <svg style={{ position: "absolute", top: 56, left: 0, pointerEvents: "none", overflow: "visible", zIndex: 2 }} width={totalW} height={totalH}>
+                  {getArrows().map((a) => {
+                    // Smooth cubic bezier: horizontal tangents at both ends
+                    let d;
+                    if (a.tx > a.fx) {
+                      // Normal: dep ends before dependent starts — S-curve
+                      const cp = Math.min((a.tx - a.fx) / 2, colW * 4);
+                      d = `M${a.fx},${a.fy} C${a.fx + cp},${a.fy} ${a.tx - cp},${a.ty} ${a.tx},${a.ty}`;
+                    } else {
+                      // Overlap/back-ref: route around with a wide U-curve
+                      const bend = Math.max(colW * 2, a.fx - a.tx + colW * 2);
+                      d = `M${a.fx},${a.fy} C${a.fx + bend},${a.fy} ${a.tx - bend},${a.ty} ${a.tx},${a.ty}`;
+                    }
+                    const ah = 5;
+                    const arrowPts = `${a.tx},${a.ty} ${a.tx - ah},${a.ty - ah * 0.6} ${a.tx - ah},${a.ty + ah * 0.6}`;
+                    return (
+                      <g key={a.key}>
+                        <path d={d} fill="none" stroke={C.accent} strokeWidth={1.5} strokeOpacity={0.55} />
+                        <polygon points={arrowPts} fill={C.accent} fillOpacity={0.75} />
+                      </g>
+                    );
+                  })}
+                </svg>
               </div>
             </div>
           </div>
@@ -863,7 +856,7 @@ export default function GanttApp() {
                   onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverPerson(null); }}
                   onDrop={(e) => {
                     e.preventDefault();
-                    if (draggingTask && draggingTask.fromPerson !== w.person) {
+                    if (draggingTask && draggingTask.fromPerson !== w.person && !isTaskCompleted(draggingTask.sn)) {
                       setAssignments((a) => ({ ...a, [draggingTask.sn]: w.person }));
                     }
                     setDraggingTask(null);
@@ -908,47 +901,55 @@ export default function GanttApp() {
                   {/* Task list */}
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {w.tasks.map((t) => {
-                      const sc = statusColor(t["Status"], themeKey);
-                      const isDragging = draggingTask?.sn === t["Serial Number"];
-                      const isCtxOpen = contextMenu?.sn === t["Serial Number"];
+                      const sn = t["Serial Number"];
+                      const currentStatus = getStatus(sn);
+                      const sc = statusColor(currentStatus, themeKey);
+                      const isDragging = draggingTask?.sn === sn;
+                      const isCtxOpen = contextMenu?.sn === sn;
                       const isTest = isTestTask(t["Description"]);
                       const taskColor = isTest ? C.purple : sc;
+                      const completed = isTaskCompleted(sn);
                       return (
                         <div
-                          key={t["Serial Number"]}
-                          draggable
-                          onDragStart={() => setDraggingTask({ sn: t["Serial Number"], fromPerson: w.person })}
+                          key={sn}
+                          draggable={!completed}
+                          onDragStart={() => { if (!completed) setDraggingTask({ sn, fromPerson: w.person }); }}
                           onDragEnd={() => { setDraggingTask(null); setDragOverPerson(null); }}
                           onContextMenu={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            setContextMenu({ sn: t["Serial Number"], x: e.clientX, y: e.clientY, currentPerson: w.person });
+                            setContextMenu({ sn, x: e.clientX, y: e.clientY, currentPerson: w.person });
                           }}
                           style={{
                             display: "flex", gap: 8, alignItems: "center",
-                            background: isCtxOpen ? C.accentDim : isDragging ? C.accentDim : isTest ? C.purple + "18" : C.surface,
-                            border: `1px solid ${isCtxOpen ? C.accent : isDragging ? C.accent : isTest ? C.purple + "88" : C.border}`,
+                            background: completed ? C.green + "18" : isCtxOpen ? C.accentDim : isDragging ? C.accentDim : isTest ? C.purple + "18" : C.surface,
+                            border: `1px solid ${completed ? C.green + "88" : isCtxOpen ? C.accent : isDragging ? C.accent : isTest ? C.purple + "88" : C.border}`,
                             borderRadius: 6, padding: "6px 10px",
-                            cursor: "grab", opacity: isDragging ? 0.5 : 1,
+                            cursor: completed ? "default" : "grab", opacity: isDragging ? 0.5 : 1,
                             transition: "opacity 0.15s, border-color 0.15s, background 0.15s",
                             userSelect: "none",
                           }}
                         >
                           <span style={{ fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace", width: 20, flexShrink: 0 }}>
-                            {t["Serial Number"]}
+                            {sn}
                           </span>
                           {isTest && (
                             <span style={{ background: C.purple, color: "#fff", borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0 }}>
                               TEST
                             </span>
                           )}
-                          <span style={{ fontSize: 11, flex: 1, lineHeight: 1.35, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t["Description"]}>
+                          {completed && (
+                            <span style={{ background: C.green, color: "#fff", borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0 }}>
+                              DONE
+                            </span>
+                          )}
+                          <span style={{ fontSize: 11, flex: 1, lineHeight: 1.35, color: completed ? C.muted : C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t["Description"]}>
                             {t["Description"]}
                           </span>
                           <span style={{ fontSize: 9, color: taskColor, whiteSpace: "nowrap", flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>
                             {t["Days"]}d
                           </span>
-                          <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>
+                          {!completed && <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>}
                         </div>
                       );
                     })}
@@ -981,56 +982,81 @@ export default function GanttApp() {
             >
               {/* Header */}
               <div style={{ padding: "10px 14px 8px", borderBottom: `1px solid ${C.border}` }}>
-                <div style={{ fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace", marginBottom: 2 }}>ASSIGN TO</div>
-                <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
+                <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
                   {rawTasks.find((t) => t["Serial Number"] === contextMenu.sn)?.["Description"] || `Task ${contextMenu.sn}`}
                 </div>
               </div>
-              {/* Resource options */}
-              <div style={{ padding: "4px 0" }}>
-                {resources.map((person) => {
-                  const isCurrent = person === contextMenu.currentPerson;
+              {/* Status options */}
+              <div style={{ padding: "4px 0", borderBottom: `1px solid ${C.border}` }}>
+                <div style={{ padding: "6px 14px 4px", fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace" }}>STATUS</div>
+                {TASK_STATUSES.map((s) => {
+                  const isCurrent = getStatus(contextMenu.sn) === s;
+                  const sColor = statusColor(s, themeKey);
                   return (
                     <div
-                      key={person}
-                      onClick={() => {
-                        if (!isCurrent) setAssignments((a) => ({ ...a, [contextMenu.sn]: person }));
-                        setContextMenu(null);
-                      }}
+                      key={s}
+                      onClick={() => { setTaskStatus(contextMenu.sn, s); setContextMenu(null); }}
                       style={{
                         display: "flex", alignItems: "center", justifyContent: "space-between",
-                        padding: "8px 14px", cursor: isCurrent ? "default" : "pointer",
-                        background: isCurrent ? C.accentDim : "transparent",
-                        color: isCurrent ? C.accent : C.text,
-                        fontSize: 13,
-                        transition: "background 0.1s",
+                        padding: "7px 14px", cursor: "pointer",
+                        background: isCurrent ? sColor + "22" : "transparent",
+                        color: isCurrent ? sColor : C.text,
+                        fontSize: 12, transition: "background 0.1s",
                       }}
-                      onMouseEnter={(e) => { if (!isCurrent) e.currentTarget.style.background = C.surface; }}
-                      onMouseLeave={(e) => { if (!isCurrent) e.currentTarget.style.background = "transparent"; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = isCurrent ? sColor + "22" : C.surface; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = isCurrent ? sColor + "22" : "transparent"; }}
                     >
-                      <span>{person}</span>
-                      {isCurrent && <span style={{ fontSize: 10, color: C.accent, fontFamily: "'DM Mono', monospace" }}>current</span>}
+                      <span>{s}</span>
+                      {isCurrent && <span style={{ fontSize: 9, color: sColor, fontFamily: "'DM Mono', monospace" }}>✓</span>}
                     </div>
                   );
                 })}
               </div>
-              {/* Unassign option */}
-              <div style={{ borderTop: `1px solid ${C.border}`, padding: "4px 0" }}>
-                <div
-                  onClick={() => {
-                    setAssignments((a) => { const n = { ...a }; delete n[contextMenu.sn]; return n; });
-                    setContextMenu(null);
-                  }}
-                  style={{
-                    padding: "8px 14px", cursor: "pointer", color: C.red, fontSize: 13,
-                    transition: "background 0.1s",
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = C.surface; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                >
-                  Unassign
-                </div>
-              </div>
+              {/* Assign to options (disabled when completed) */}
+              {!isTaskCompleted(contextMenu.sn) && (
+                <>
+                  <div style={{ padding: "6px 14px 4px", fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace" }}>ASSIGN TO</div>
+                  <div style={{ padding: "0 0 4px" }}>
+                    {resources.map((person) => {
+                      const isCurrent = person === contextMenu.currentPerson;
+                      return (
+                        <div
+                          key={person}
+                          onClick={() => {
+                            if (!isCurrent) setAssignments((a) => ({ ...a, [contextMenu.sn]: person }));
+                            setContextMenu(null);
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            padding: "7px 14px", cursor: isCurrent ? "default" : "pointer",
+                            background: isCurrent ? C.accentDim : "transparent",
+                            color: isCurrent ? C.accent : C.text,
+                            fontSize: 12, transition: "background 0.1s",
+                          }}
+                          onMouseEnter={(e) => { if (!isCurrent) e.currentTarget.style.background = C.surface; }}
+                          onMouseLeave={(e) => { if (!isCurrent) e.currentTarget.style.background = "transparent"; }}
+                        >
+                          <span>{person}</span>
+                          {isCurrent && <span style={{ fontSize: 9, color: C.accent, fontFamily: "'DM Mono', monospace" }}>current</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ borderTop: `1px solid ${C.border}`, padding: "4px 0" }}>
+                    <div
+                      onClick={() => {
+                        setAssignments((a) => { const n = { ...a }; delete n[contextMenu.sn]; return n; });
+                        setContextMenu(null);
+                      }}
+                      style={{ padding: "7px 14px", cursor: "pointer", color: C.red, fontSize: 12, transition: "background 0.1s" }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = C.surface; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    >
+                      Unassign
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

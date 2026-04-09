@@ -98,7 +98,7 @@ describe('App Component', () => {
       render(<App />);
       const fileInput = document.querySelector('input[type="file"]');
       expect(fileInput).toBeInTheDocument();
-      expect(fileInput.accept).toBe('.xlsx,.xls,.csv');
+      expect(fileInput.accept).toBe('.xlsx,.csv');
     });
 
     test('file input is hidden from display', () => {

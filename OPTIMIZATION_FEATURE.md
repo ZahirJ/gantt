@@ -32,6 +32,7 @@ Before any assignment changes are made, tasks are grouped into **units**:
 - A **unit** = one non-test task + all test tasks that directly depend on it.
 - Test tasks are permanently paired with their lead task and always move together as one unit — a test task is never reassigned without its lead.
 - Units are ordered by their lead task's Serial Number.
+- **Units that contain any completed task are excluded** — completed tasks are locked in place and their units are never moved.
 
 ### Step 2 — Initial assignment (empty-resource path only)
 
@@ -119,6 +120,7 @@ Test tasks (description contains `test` or `testing`) are highlighted in purple 
 | Constraint | Enforced |
 |---|---|
 | Test task stays with its lead task | Yes — units always move together |
+| Completed tasks never move | Yes — any unit containing a completed task is excluded |
 | Finish-to-Start dependencies | Yes — scheduling engine handles wait time |
 | 5-working-day leveling threshold | Yes — uses real calendar days |
 | Holidays & vacation | Yes — scheduling engine accounts for them |
