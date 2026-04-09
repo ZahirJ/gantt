@@ -14,16 +14,17 @@ npm run build      # Production build
 
 ## Architecture
 
-This is a single-page React app with **no backend, no routing, and no external state management**. The entire application lives in two source files:
+This is a single-page React app with **no backend, no routing, and no external state management**. Source files:
 
-- `src/App.jsx` — all UI, scheduling engine, import/export, drag-and-drop, and theme logic in one file
-- `src/utils/optimize.js` — standalone optimization module (greedy task reassignment to minimize project finish date)
+- `src/App.jsx` — all UI, import/export, drag-and-drop, and theme logic
+- `src/utils/scheduleUtils.js` — pure scheduling helpers (`scheduleTasks`, `isWorkday`, etc.) and the `levelOptimize` function; imported by both App.jsx and tests
+- `src/utils/optimize.js` — legacy standalone optimizer (greedy local-search); kept for its test suite
 
 ### Key data flows in App.jsx
 
-**State**: React `useState` holds tasks, assignments (`taskId → assigneeName`), resources, holidays, vacations, progress, theme, and active tab.
+**State**: React `useState` holds tasks, assignments (`taskId → assigneeName`), resources, holidays, vacations, progress (% per task), taskStatuses (status label per task), theme, and active tab.
 
-**Scheduling engine** (`buildSchedule` / `scheduleTask` inside App.jsx): Produces computed start/end dates for each task. Runs purely in memory via `useMemo` on every render. Respects:
+**Scheduling engine** (`scheduleTasks` in `scheduleUtils.js`): Produces computed start/end dates for each task. Called via `useMemo` on every render. Respects:
 - 5-day work weeks, skipping weekends
 - Global public holidays
 - Per-person vacation days
@@ -31,19 +32,32 @@ This is a single-page React app with **no backend, no routing, and no external s
 - One task per person at a time (no parallel splitting)
 - Serial Number ordering as a tiebreaker
 
-**Import path**: `parseFile` reads `.xlsx`/`.xls`/`.csv` via SheetJS. Detects session files by checking for both `Session` and `Schedule` sheet names. Task files go through `normalizeTasks` which normalizes column names and applies complexity→days fallback (`S=1, M=3, L=5, XL=10`).
+**Import path**: `parseFile` reads `.xlsx`/`.xls`/`.csv` via SheetJS (`raw: false`). Detects session files by checking for both `Session` and `Schedule` sheet names. Task files go through `normalizeTasks` which normalizes column names (including case-insensitive "Depends on/On"), filters self-referencing deps, and applies complexity→days fallback (`S=1, M=3, L=5, XL=10`).
 
-**Export path**: SheetJS writes three sheets — `Schedule` (task rows with dates), `Session` (key-value state dump), `Workload` (per-person summary). Session files can be re-imported to fully restore state.
+**Export path**: SheetJS writes three sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses), `Workload` (per-person summary). Session files can be re-imported to fully restore state.
 
-**Optimization** (`src/utils/optimize.js`): Only moves tasks whose `description` starts with `Add test` or `Add tests` (case-insensitive). Uses a greedy local-search loop: for each movable task, try every team member and keep the assignment that gives the lowest `computeFinish`. Rejects assignments that create resource idle gaps. Saves previous assignments to `undoHistory` stack before mutating.
+**Optimization** (`levelOptimize` in `scheduleUtils.js`): Balances workload across resources by moving task units (lead + test dependents) from overloaded to underloaded resources. Completed tasks (progress = 100 / status = "Completed") are never moved. Saves previous assignments to `undoHistory` stack before mutating.
+
+### Task status
+
+Tasks have four statuses: `Open`, `In Progress`, `Completed`, `Open(May not need fix)`. Status is tracked in `taskStatuses` state (separate from `progress` %) and kept in sync:
+- Setting "Completed" → progress = 100, task locked (not draggable, not assignable, skipped by optimizer)
+- Setting "In Progress" → progress = max(current, 10)
+- Setting "Open" / other → progress = 0
+
+Status can be changed via the inline `<select>` in the Gantt task list or via the right-click context menu in the Workload view.
 
 ### Test task identification
 
-Both `App.jsx` and `optimize.js` use the same regex to identify test tasks:
+The regex used to identify test tasks:
 ```js
 /^add tests?\b/i.test(description.trim())
 ```
-Tasks matching this pattern get a distinct color and TEST badge in the Gantt view, and are the only tasks eligible for optimization reassignment.
+Tasks matching this pattern get a distinct purple color and TEST badge in both views, and are the only tasks eligible for optimization reassignment.
+
+### Dependency arrows
+
+`getArrows()` in App.jsx computes Finish-to-Start arrows from `scheduledTasks`. Each arrow goes from the right edge of the dependency bar to the left edge of the dependent bar. Rendered as SVG cubic bezier curves in a separate overlay SVG (above bars, `zIndex: 2`).
 
 ### Tabs
 
