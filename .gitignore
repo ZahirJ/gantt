@@ -36,3 +36,4 @@ SECURITY_REPORT.md
 
 # Example files with potentially sensitive data
 examples/ObjectStorageLibrary-Workplan-copy*
+dist/
