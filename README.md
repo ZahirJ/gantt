@@ -66,29 +66,24 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org) v14 or higher (v18 LTS recommended)
+- [Node.js](https://nodejs.org) **v18 or higher** (required by Vite 8)
 
 ### Installation
 
 ```bash
-npx create-react-app gantt
+git clone https://github.com/ZahirJ/gantt.git
 cd gantt
-npm install xlsx
-```
-
-Replace `src/App.jsx` with `gantt-app.jsx`, then:
-
-```bash
+npm install
 npm start
 ```
 
-The app opens at `http://localhost:3000`.
+The app opens at `http://localhost:5173`.
 
 ---
 
 ## Importing Your Task File
 
-The app accepts `.xlsx`, `.xls`, and `.csv` files. Drag and drop onto the import screen or click to browse.
+The app accepts `.xlsx` and `.csv` files. Drag and drop onto the import screen or click to browse.
 
 ### Expected Columns
 
@@ -169,14 +164,19 @@ If the `Days` column is empty, the app falls back to the `Complexity` column usi
 ## Project Structure
 
 ```
+index.html                         # Vite entry point
 src/
 ├── App.jsx                        # UI, import/export, drag-and-drop, theme
+├── index.jsx                      # React root mount
+├── setupTests.js                  # Vitest global setup
 └── utils/
     ├── scheduleUtils.js           # Pure scheduling helpers + levelOptimize (shared with tests)
     ├── optimize.js                # Legacy greedy optimizer (kept for its test suite)
     ├── levelOptimize.test.js      # Optimizer tests using the Objectstore workplan fixture
     ├── optimize.test.js           # Unit tests for the legacy optimizer
     └── optimize.bench.test.js     # Performance / scale tests
+vite.config.js                     # Vite build config
+vitest.config.js                   # Vitest test config
 ```
 
 No external state management or backend required.
@@ -185,11 +185,23 @@ No external state management or backend required.
 
 ## Tech Stack
 
-- **React 18** — UI and state
-- **SheetJS (xlsx)** — Excel and CSV import/export
-- **HTML5 Drag and Drop API** — workload reordering
-- **SVG** — Gantt bars, dependency arrows, grid
-- No CSS framework, no external component library
+### Runtime
+| Library | Purpose |
+|---|---|
+| **React 19** | UI components and state management |
+| **ExcelJS** | Excel (.xlsx) import and export |
+| **HTML5 Drag and Drop API** | Task reordering in the Workload view |
+| **SVG** | Gantt bars, dependency arrows, grid lines |
+
+### Build & Dev tooling
+| Tool | Purpose |
+|---|---|
+| **Vite 8** | Dev server and production bundler (requires Node ≥ 18) |
+| **@vitejs/plugin-react** | JSX transform and React Fast Refresh |
+| **Vitest** | Unit and integration test runner |
+| **@testing-library/react** | React component test utilities |
+
+No CSS framework, no external component library, no backend.
 
 ---
 
