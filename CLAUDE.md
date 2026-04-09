@@ -36,7 +36,12 @@ This is a single-page React app with **no backend, no routing, and no external s
 
 **Export path**: SheetJS writes three sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses), `Workload` (per-person summary). Session files can be re-imported to fully restore state.
 
-**Optimization** (`levelOptimize` in `scheduleUtils.js`): Balances workload across resources by moving task units (lead + test dependents) from overloaded to underloaded resources. Completed tasks (progress = 100 / status = "Completed") are never moved. Saves previous assignments to `undoHistory` stack before mutating.
+**Optimization** (`levelOptimize` in `scheduleUtils.js`): Minimises the overall project finish date (makespan) by moving task units across resources. A **unit** = one non-test lead task + all test tasks that directly depend on it. Key behaviours:
+- Tasks with Status = Completed are filtered out on file import (before any state is set)
+- Units containing any completed task are excluded from all moves
+- Initial round-robin (when any resource is empty) uses **priority order**: topological depth ascending, then transitive dependent count descending — tasks that unblock the most downstream work are assigned first
+- Leveling loop: each iteration tries every movable unit on the most-loaded resource against every other resource, applies whichever move gives the lowest new overall finish date; stops when no move improves the result
+- Saves previous assignments to `undoHistory` stack before mutating
 
 ### Task status
 
