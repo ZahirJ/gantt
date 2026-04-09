@@ -37,7 +37,7 @@ describe('optimize – scale tests (4 resources, 100 tasks)', () => {
         const { tasks, members, assignments } = makeProject();
         let resultAssignments;
         const setAssignments = (a) => { resultAssignments = a; };
-        const setUndoHistory = jest.fn();
+        const setUndoHistory = vi.fn();
 
         const start = Date.now();
         optimizeAndRedistributeTasks({
@@ -54,7 +54,7 @@ describe('optimize – scale tests (4 resources, 100 tasks)', () => {
         const { tasks, members, assignments } = makeProject();
         let resultAssignments;
         const setAssignments = (a) => { resultAssignments = a; };
-        const setUndoHistory = jest.fn();
+        const setUndoHistory = vi.fn();
 
         // Compute baseline finish (same logic as optimizer's computeFinish)
         const computeFinish = (assign) => {
@@ -104,7 +104,7 @@ describe('optimize – scale tests (4 resources, 100 tasks)', () => {
         const { tasks, members, assignments } = makeProject();
         let resultAssignments;
         const setAssignments = (a) => { resultAssignments = a; };
-        const setUndoHistory = jest.fn();
+        const setUndoHistory = vi.fn();
 
         optimizeAndRedistributeTasks({
             tasks, teamMembers: members, assignments,
@@ -121,7 +121,7 @@ describe('optimize – scale tests (4 resources, 100 tasks)', () => {
         const { tasks, members, assignments } = makeProject();
         let resultAssignments;
         const setAssignments = (a) => { resultAssignments = a; };
-        const setUndoHistory = jest.fn();
+        const setUndoHistory = vi.fn();
 
         optimizeAndRedistributeTasks({
             tasks, teamMembers: members, assignments,
@@ -151,7 +151,7 @@ describe('optimize – scale tests (4 resources, 100 tasks)', () => {
         let resultAssignments;
         optimizeAndRedistributeTasks({
             tasks, teamMembers: members, assignments,
-            undoHistory: [], setAssignments: a => { resultAssignments = a; }, setUndoHistory: jest.fn()
+            undoHistory: [], setAssignments: a => { resultAssignments = a; }, setUndoHistory: vi.fn()
         });
 
         const movedTests = ['test1', 'test2', 'test3'].filter(id => resultAssignments[id] !== 'Alice');

@@ -1,11 +1,15 @@
 import * as XLSX from 'xlsx';
 import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { levelOptimize } from './scheduleUtils';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Load and normalize the Objectstore workplan
 function loadObjectstoreTasks() {
   const filePath = path.resolve(__dirname, '../../examples/ObjectStorageLibrary-Workplan-copy (1).xlsx');
-  const wb = XLSX.readFile(filePath);
+  const wb = XLSX.read(fs.readFileSync(filePath));
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
