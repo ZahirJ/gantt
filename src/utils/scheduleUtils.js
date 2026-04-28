@@ -1,6 +1,13 @@
 // Pure scheduling helpers shared between App.jsx and tests
 
-export function fmtDate(d) { return new Date(d).toISOString().slice(0, 10); }
+export function fmtDate(d) {
+  const date = new Date(d);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
 
 export function isWorkday(date, holidays, vacMap, person) {
   const dow = date.getDay();

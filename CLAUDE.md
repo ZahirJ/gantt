@@ -17,7 +17,7 @@ npm run build      # Production build
 This is a single-page React app with **no backend, no routing, and no external state management**. Source files:
 
 - `src/App.jsx` — all UI, import/export, drag-and-drop, and theme logic
-- `src/utils/scheduleUtils.js` — pure scheduling helpers (`scheduleTasks`, `isWorkday`, etc.) and the `levelOptimize` function; imported by both App.jsx and tests
+- `src/utils/scheduleUtils.js` — pure scheduling helpers (`fmtDate`, `scheduleTasks`, `isWorkday`, etc.) and the `levelOptimize` function; imported by both App.jsx and tests
 - `src/utils/optimize.js` — legacy standalone optimizer (greedy local-search); kept for its test suite
 
 ### Key data flows in App.jsx
@@ -34,7 +34,9 @@ This is a single-page React app with **no backend, no routing, and no external s
 
 **Import path**: `parseFile` reads `.xlsx`/`.xls`/`.csv` via SheetJS (`raw: false`). Detects session files by checking for both `Session` and `Schedule` sheet names. Task files go through `normalizeTasks` which normalizes column names (including case-insensitive "Depends on/On"), filters self-referencing deps, and applies complexity→days fallback (`S=1, M=3, L=5, XL=10`).
 
-**Export path**: SheetJS writes three sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses), `Workload` (per-person summary). Session files can be re-imported to fully restore state.
+**Export path**: SheetJS writes three sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses and `PROJECT START`), `Workload` (per-person summary). Session files can be re-imported to fully restore state.
+
+**Date formatting** (`fmtDate` in `scheduleUtils.js`): All dates are stored and compared as `YYYY-MM-DD` strings. Uses local date components (`getFullYear/getMonth/getDate`) rather than `toISOString()` to avoid UTC-offset shifts when converting Date objects returned by ExcelJS from date-typed cells.
 
 **Optimization** (`levelOptimize` in `scheduleUtils.js`): Minimises the overall project finish date (makespan) by moving task units across resources. A **unit** = one non-test lead task + all test tasks that directly depend on it. Key behaviours:
 - Tasks with Status = Completed are filtered out on file import (before any state is set)
