@@ -5,10 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm start          # Dev server at http://localhost:3000
-npm test           # Run all tests (watch mode)
-npm test -- --watchAll=false   # Run tests once (CI mode)
-npm test -- --testPathPattern=optimize   # Run a specific test file
+npm start          # Dev server at http://localhost:5173
+npm stop           # Kill the dev server on port 5173
+npm test           # Run all tests once (Vitest, CI mode)
+npm run test:watch # Run tests in watch mode
+npm test -- scheduleUtils   # Run a specific test file (partial name match)
 npm run build      # Production build
 ```
 
@@ -32,9 +33,9 @@ This is a single-page React app with **no backend, no routing, and no external s
 - One task per person at a time (no parallel splitting)
 - Serial Number ordering as a tiebreaker
 
-**Import path**: `parseFile` reads `.xlsx`/`.xls`/`.csv` via SheetJS (`raw: false`). Detects session files by checking for both `Session` and `Schedule` sheet names. Task files go through `normalizeTasks` which normalizes column names (including case-insensitive "Depends on/On"), filters self-referencing deps, and applies complexity→days fallback (`S=1, M=3, L=5, XL=10`).
+**Import path**: `parseFile` reads `.xlsx`/`.csv` via ExcelJS (`wb.xlsx.load`). CSV is read via `FileReader` and parsed manually. Detects session files by checking for both `Session` and `Schedule` sheet names. Task files go through `normalizeTasks` which normalizes column names (including case-insensitive "Depends on/On"), filters self-referencing deps, and applies complexity→days fallback (`S=1, M=3, L=5, XL=10`).
 
-**Export path**: SheetJS writes three sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses and `PROJECT START`), `Workload` (per-person summary). Session files can be re-imported to fully restore state.
+**Export path**: ExcelJS writes three sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses and `PROJECT START`), `Workload` (per-person summary). Session files can be re-imported to fully restore state. A separate CSV export path (via Blob URL) writes only the scheduled task list.
 
 **Date formatting** (`fmtDate` in `scheduleUtils.js`): All dates are stored and compared as `YYYY-MM-DD` strings. Uses local date components (`getFullYear/getMonth/getDate`) rather than `toISOString()` to avoid UTC-offset shifts when converting Date objects returned by ExcelJS from date-typed cells.
 
