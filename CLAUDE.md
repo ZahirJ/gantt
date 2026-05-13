@@ -19,11 +19,14 @@ This is a single-page React app with **no backend, no routing, and no external s
 
 - `src/App.jsx` — all UI, import/export, drag-and-drop, and theme logic
 - `src/utils/scheduleUtils.js` — pure scheduling helpers (`fmtDate`, `scheduleTasks`, `isWorkday`, etc.) and the `levelOptimize` function; imported by both App.jsx and tests
+- `src/utils/taskMutations.js` — pure helpers for task deletion and unassignment (`applyDeleteTask`, `applyDeleteAllUnassigned`, `applyUnassignAllForPerson`); take plain state objects and return new state objects without side effects
 - `src/utils/optimize.js` — legacy standalone optimizer (greedy local-search); kept for its test suite
+- `src/components/AddTaskModal.jsx` — multi-step modal for creating a new task
+- `src/components/ConfirmDialog.jsx` — reusable confirmation dialog; accepts `message`, `confirmLabel` (default `"Delete"`), `onConfirm`, `onCancel`, and `C` (theme) props
 
 ### Key data flows in App.jsx
 
-**State**: React `useState` holds tasks, assignments (`taskId → assigneeName`), resources, holidays, vacations, progress (% per task), taskStatuses (status label per task), theme, and active tab.
+**State**: React `useState` holds tasks, assignments (`taskId → assigneeName`), resources, holidays, vacations, progress (% per task), taskStatuses (status label per task), theme, active tab, and `confirmDialog` (pending confirmation action).
 
 **Scheduling engine** (`scheduleTasks` in `scheduleUtils.js`): Produces computed start/end dates for each task. Called via `useMemo` on every render. Respects:
 - 5-day work weeks, skipping weekends
@@ -66,6 +69,23 @@ Tasks matching this pattern get a distinct purple color and TEST badge in both v
 ### Dependency arrows
 
 `getArrows()` in App.jsx computes Finish-to-Start arrows from `scheduledTasks`. Each arrow goes from the right edge of the dependency bar to the left edge of the dependent bar. Rendered as SVG cubic bezier curves in a separate overlay SVG (above bars, `zIndex: 2`).
+
+### Task deletion
+
+Three operations mutate task state together (`rawTasks`, `assignments`, `progress`, `taskStatuses`). The pure logic lives in `taskMutations.js`; the React wrappers in App.jsx call `applyDeleteTask` / `applyDeleteAllUnassigned` / `applyUnassignAllForPerson` and dispatch the results to their respective state setters.
+
+All destructive actions go through `askConfirm(message, onConfirm, confirmLabel?)` which sets `confirmDialog` state and renders `<ConfirmDialog>`. The label defaults to `"Delete"` and is overridden to `"Unassign"` for unassignment actions.
+
+Entry points:
+- `×` button on each Gantt list row → delete single task
+- Right-click context menu "Delete task" (Workload view) → delete single task
+- Toolbar "✕ Unassigned" button → delete all unassigned tasks (visible only when unassigned tasks exist)
+- Resource card "Unassign all" button → unassign all tasks for that person
+- Unassigned card "Delete all" button → delete all unassigned tasks
+
+### Unassigned card (Workload tab)
+
+When unassigned tasks exist, an "Unassigned" card appears at the end of the resource grid with a dashed border. Tasks in it are draggable to any resource card to assign them. Any assigned task can be dragged onto the Unassigned card to unassign it ("Drop here to unassign" hint appears). The card has a "Delete all" button with confirmation.
 
 ### Tabs
 
