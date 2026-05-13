@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef } from "react";
 import ExcelJS from "exceljs";
 import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize } from "./utils/scheduleUtils";
+import AddTaskModal from "./components/AddTaskModal";
 
 // ── Themes ─────────────────────────────────────────────────────────────────────
 const THEMES = {
@@ -57,6 +58,8 @@ function heatColor(count = 0, theme = "dark") {
   const palette = HEAT_COLORS[theme] || HEAT_COLORS.dark;
   return palette[Math.min(count, palette.length - 1)];
 }
+
+const UNASSIGNED_COLOR = { dark: "#64748b", light: "#94a3b8" };
 
 function statusColor(s = "", theme = "dark") {
   return makeStatusColor(theme)[s.toLowerCase()] || THEMES[theme].muted;
@@ -230,6 +233,11 @@ function normalizeTasks(rows) {
   });
 }
 
+function generateSerial(rawTasks) {
+  const nums = rawTasks.map(t => parseInt(t["Serial Number"], 10)).filter(n => !isNaN(n));
+  return String(nums.length > 0 ? Math.max(...nums) + 1 : rawTasks.length + 1);
+}
+
 // ── Scheduling helpers ─────────────────────────────────────────────────────────
 // fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks imported from ./utils/scheduleUtils
 
@@ -263,6 +271,7 @@ export default function GanttApp() {
   const [draggingTask, setDraggingTask] = useState(null); // { sn, fromPerson }
   const [dragOverPerson, setDragOverPerson] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { sn, x, y, currentPerson }
+  const [addTaskModal, setAddTaskModal] = useState(null); // null | { initialSerial }
 
   const TASK_STATUSES = ["Open", "In Progress", "Completed", "Open(May not need fix)"];
 
@@ -275,6 +284,25 @@ export default function GanttApp() {
       ...p,
       [String(sn)]: newStatus === "Completed" ? 100 : newStatus === "In Progress" ? Math.max(p[String(sn)] ?? 0, 10) : 0,
     }));
+  }
+
+  function submitNewTask(draft) {
+    const sn = draft.serial;
+    setRawTasks(prev => [...prev, {
+      "Serial Number": sn,
+      "Category": draft.category || "",
+      "Description": draft.description,
+      "Depends On": draft.dependsOn || "",
+      "Status": draft.status || "Open",
+      "Complexity": draft.complexity || "M",
+      "Days": parseInt(draft.days) || 1,
+      "Assignee": draft.assignee || "",
+      "Integration Effort": draft.integrationEffort || "",
+    }]);
+    if (draft.assignee) setAssignments(prev => ({ ...prev, [sn]: draft.assignee }));
+    setTaskStatuses(prev => ({ ...prev, [sn]: draft.status || "Open" }));
+    setProgress(prev => ({ ...prev, [sn]: 0 }));
+    setAddTaskModal(null);
   }
 
   function loadTasks(allTasks) {
@@ -498,7 +526,8 @@ export default function GanttApp() {
       getStatus(t["Serial Number"]), t["Complexity"], t["Days"], t._start, t._end,
       assignments[t["Serial Number"]] || "", t["Integration Effort"],
     ]);
-    const csv = [headers, ...rows].map((r) => r.map((c) => `"${String(c ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+    const csvCell = (c) => { const s = String(c ?? ""); return `"${(/^[=+\-@\t\r]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`; };
+    const csv = [headers, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     a.download = "gantt_scheduled.csv";
@@ -666,6 +695,7 @@ export default function GanttApp() {
           style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 13 }}>
           {themeKey === "dark" ? "☀️" : "🌙"}
         </button>
+        <button onClick={() => setAddTaskModal({ initialSerial: generateSerial(rawTasks) })} style={{ background: C.green, border: "none", color: "#fff", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>+ Task</button>
         <button onClick={optimizeAndRedistributeTasks} style={{ background: C.accent, border: "none", color: "#fff", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Optimize: Redistribute Test & Development tasks to minimize end date">⚡ Optimize</button>
         {undoHistory.length > 0 && (
           <button onClick={undoOptimization} style={{ background: C.yellow, border: "none", color: C.bg, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Undo last optimization">↶ Undo</button>
@@ -704,11 +734,12 @@ export default function GanttApp() {
                   const currentStatus = getStatus(sn);
                   const sc = statusColor(currentStatus, themeKey);
                   const completed = isTaskCompleted(sn);
+                  const isUnassigned = !assignments[sn];
                   return (
                     <div key={sn} style={{
                       height: rowH, display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
                       borderBottom: `1px solid ${C.border}18`,
-                      background: completed ? C.green + "0d" : i % 2 === 0 ? "transparent" : C.surface + "55",
+                      background: completed ? C.green + "0d" : isUnassigned ? UNASSIGNED_COLOR[themeKey] + "14" : i % 2 === 0 ? "transparent" : C.surface + "55",
                     }}>
                       <span style={{ width: 26, fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{sn}</span>
                       <div style={{ flex: 1, overflow: "hidden" }}>
@@ -780,7 +811,8 @@ export default function GanttApp() {
                     const pct = progress[task["Serial Number"]] ?? 0;
                     const isTest = isTestTask(task["Description"]);
                     const sn = task["Serial Number"];
-                    const col = isTest ? C.purple : heatColor(dependentCount[sn] || 0, themeKey);
+                    const isUnassigned = !assignments[sn];
+                    const col = isTest ? C.purple : isUnassigned ? UNASSIGNED_COLOR[themeKey] : heatColor(dependentCount[sn] || 0, themeKey);
                     return (
                       <div key={task["Serial Number"]} style={{
                         height: rowH, position: "relative",
@@ -788,7 +820,9 @@ export default function GanttApp() {
                       }}>
                         <div style={{
                           position: "absolute", left: x, top: 8, width: w, height: rowH - 16,
-                          background: col + "30", border: `1px solid ${col}88`, borderRadius: 4,
+                          background: col + "30",
+                          borderWidth: 1, borderStyle: isUnassigned && !isTest ? "dashed" : "solid",
+                          borderColor: col + "88", borderRadius: 4,
                           overflow: "hidden",
                         }}>
                           <div style={{ width: `${pct}%`, height: "100%", background: col + "44" }} />
@@ -799,10 +833,10 @@ export default function GanttApp() {
                               fontFamily: "'DM Mono', monospace",
                             }}>
                               {isTest && (
-                                <span style={{
-                                  background: col, color: "#fff", borderRadius: 3,
-                                  padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0,
-                                }}>TEST</span>
+                                <span style={{ background: col, color: "#fff", borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0 }}>TEST</span>
+                              )}
+                              {isUnassigned && !isTest && (
+                                <span style={{ background: col, color: "#fff", borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0 }}>UNSET</span>
                               )}
                               {pct > 0 ? `${pct}% · ` : ""}{task["Description"]?.slice(0, 22)}
                             </div>
@@ -941,7 +975,8 @@ export default function GanttApp() {
                       const isDragging = draggingTask?.sn === sn;
                       const isCtxOpen = contextMenu?.sn === sn;
                       const isTest = isTestTask(t["Description"]);
-                      const taskColor = isTest ? C.purple : heatColor(dependentCount[sn] || 0, themeKey);
+                      const isUnassigned = !assignments[sn];
+                      const taskColor = isTest ? C.purple : isUnassigned ? UNASSIGNED_COLOR[themeKey] : heatColor(dependentCount[sn] || 0, themeKey);
                       const completed = isTaskCompleted(sn);
                       return (
                         <div
@@ -956,8 +991,9 @@ export default function GanttApp() {
                           }}
                           style={{
                             display: "flex", gap: 8, alignItems: "center",
-                            background: completed ? C.green + "18" : isCtxOpen ? C.accentDim : isDragging ? C.accentDim : isTest ? C.purple + "18" : taskColor + "18",
-                            border: `1px solid ${completed ? C.green + "88" : isCtxOpen ? C.accent : isDragging ? C.accent : isTest ? C.purple + "88" : taskColor + "55"}`,
+                            background: completed ? C.green + "18" : isCtxOpen ? C.accentDim : isDragging ? C.accentDim : isTest ? C.purple + "18" : isUnassigned ? taskColor + "18" : taskColor + "18",
+                            border: `1px solid ${completed ? C.green + "88" : isCtxOpen ? C.accent : isDragging ? C.accent : isTest ? C.purple + "88" : isUnassigned ? taskColor + "88" : taskColor + "55"}`,
+                            borderStyle: isUnassigned && !isTest && !completed && !isCtxOpen && !isDragging ? "dashed" : "solid",
                             borderRadius: 6, padding: "6px 10px",
                             cursor: completed ? "default" : "grab", opacity: isDragging ? 0.5 : 1,
                             transition: "opacity 0.15s, border-color 0.15s, background 0.15s",
@@ -1169,6 +1205,18 @@ export default function GanttApp() {
             </div>
           </div>
         </div>
+      )}
+
+      {addTaskModal && (
+        <AddTaskModal
+          initialSerial={addTaskModal.initialSerial}
+          resources={resources}
+          rawTasks={rawTasks}
+          categories={categories}
+          C={C}
+          onSubmit={submitNewTask}
+          onClose={() => setAddTaskModal(null)}
+        />
       )}
     </div>
   );
