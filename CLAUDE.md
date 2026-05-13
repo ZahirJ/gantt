@@ -26,7 +26,7 @@ This is a single-page React app with **no backend, no routing, and no external s
 
 ### Key data flows in App.jsx
 
-**State**: React `useState` holds tasks, assignments (`taskId → assigneeName`), resources, holidays, vacations, progress (% per task), taskStatuses (status label per task), theme, active tab, and `confirmDialog` (pending confirmation action).
+**State**: React `useState` holds tasks, assignments (`taskId → assigneeName`), resources, holidays, vacations, progress (% per task), taskStatuses (status label per task), theme, active tab, `confirmDialog` (pending confirmation action), `sessionFileHandle` (`FileSystemFileHandle | null`), `sessionFileName` (suggested filename for the save picker), and `saveStatus` (`null | 'saving' | 'saved'` — drives the Quick Save button feedback flash).
 
 **Scheduling engine** (`scheduleTasks` in `scheduleUtils.js`): Produces computed start/end dates for each task. Called via `useMemo` on every render. Respects:
 - 5-day work weeks, skipping weekends
@@ -38,7 +38,9 @@ This is a single-page React app with **no backend, no routing, and no external s
 
 **Import path**: `parseFile` reads `.xlsx`/`.csv` via ExcelJS (`wb.xlsx.load`). CSV is read via `FileReader` and parsed manually. Detects session files by checking for both `Session` and `Schedule` sheet names. Task files go through `normalizeTasks` which normalizes column names (including case-insensitive "Depends on/On"), filters self-referencing deps, and applies complexity→days fallback (`S=1, M=3, L=5, XL=10`).
 
-**Export path**: ExcelJS writes three sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses and `PROJECT START`), `Workload` (per-person summary). Session files can be re-imported to fully restore state. A separate CSV export path (via Blob URL) writes only the scheduled task list.
+**Export path**: `buildSessionBlob()` builds a `Blob` containing three ExcelJS sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses and `PROJECT START`), `Workload` (per-person summary). Session files can be re-imported to fully restore state. A separate CSV export path (via Blob URL) writes only the scheduled task list.
+
+**Quick Save** (`quickSave()` in App.jsx): writes the session blob directly to `sessionFileHandle` when one is stored and permission is granted; otherwise opens `window.showSaveFilePicker` (File System Access API) and stores the returned `FileSystemFileHandle` + its `name` as `sessionFileName`. Falls back to a triggered anchor download if the API is unavailable. `sessionFileName` is kept in sync with the chosen filename so subsequent saves and the picker's `suggestedName` always reflect the last saved path. `sessionFileHandle` is populated either from a session-file drag-drop (via `item.getAsFileSystemHandle()`) or after the first manual save via the picker. `exportXLSX()` (Settings tab) also uses `showSaveFilePicker` and stores the handle, so Quick Save works after a manual save too.
 
 **Date formatting** (`fmtDate` in `scheduleUtils.js`): All dates are stored and compared as `YYYY-MM-DD` strings. Uses local date components (`getFullYear/getMonth/getDate`) rather than `toISOString()` to avoid UTC-offset shifts when converting Date objects returned by ExcelJS from date-typed cells.
 
