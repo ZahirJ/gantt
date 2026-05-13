@@ -2,6 +2,8 @@ import { useState, useMemo, useRef } from "react";
 import ExcelJS from "exceljs";
 import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize } from "./utils/scheduleUtils";
 import AddTaskModal from "./components/AddTaskModal";
+import ConfirmDialog from "./components/ConfirmDialog";
+import { applyDeleteTask, applyDeleteAllUnassigned, applyUnassignAllForPerson } from "./utils/taskMutations";
 
 // ── Themes ─────────────────────────────────────────────────────────────────────
 const THEMES = {
@@ -272,6 +274,11 @@ export default function GanttApp() {
   const [dragOverPerson, setDragOverPerson] = useState(null);
   const [contextMenu, setContextMenu] = useState(null); // { sn, x, y, currentPerson }
   const [addTaskModal, setAddTaskModal] = useState(null); // null | { initialSerial }
+  const [confirmDialog, setConfirmDialog] = useState(null); // null | { message, onConfirm }
+
+  function askConfirm(message, onConfirm, confirmLabel = "Delete") {
+    setConfirmDialog({ message, onConfirm, confirmLabel });
+  }
 
   const TASK_STATUSES = ["Open", "In Progress", "Completed", "Open(May not need fix)"];
 
@@ -284,6 +291,20 @@ export default function GanttApp() {
       ...p,
       [String(sn)]: newStatus === "Completed" ? 100 : newStatus === "In Progress" ? Math.max(p[String(sn)] ?? 0, 10) : 0,
     }));
+  }
+
+  function deleteTask(sn) {
+    const r = applyDeleteTask(sn, rawTasks, assignments, progress, taskStatuses);
+    setRawTasks(r.rawTasks); setAssignments(r.assignments); setProgress(r.progress); setTaskStatuses(r.taskStatuses);
+  }
+
+  function unassignAllForPerson(person) {
+    setAssignments(applyUnassignAllForPerson(person, assignments));
+  }
+
+  function deleteAllUnassigned() {
+    const r = applyDeleteAllUnassigned(rawTasks, assignments, progress, taskStatuses);
+    setRawTasks(r.rawTasks); setProgress(r.progress); setTaskStatuses(r.taskStatuses);
   }
 
   function submitNewTask(draft) {
@@ -696,6 +717,9 @@ export default function GanttApp() {
           {themeKey === "dark" ? "☀️" : "🌙"}
         </button>
         <button onClick={() => setAddTaskModal({ initialSerial: generateSerial(rawTasks) })} style={{ background: C.green, border: "none", color: "#fff", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>+ Task</button>
+        {rawTasks.some(t => !assignments[t["Serial Number"]]) && (
+          <button onClick={() => askConfirm(`Delete all ${rawTasks.filter(t => !assignments[t["Serial Number"]]).length} unassigned task(s)?`, deleteAllUnassigned)} style={{ background: "none", border: `1px solid ${C.red}`, color: C.red, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Delete all tasks with no assignee">✕ Unassigned</button>
+        )}
         <button onClick={optimizeAndRedistributeTasks} style={{ background: C.accent, border: "none", color: "#fff", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Optimize: Redistribute Test & Development tasks to minimize end date">⚡ Optimize</button>
         {undoHistory.length > 0 && (
           <button onClick={undoOptimization} style={{ background: C.yellow, border: "none", color: C.bg, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Undo last optimization">↶ Undo</button>
@@ -762,6 +786,13 @@ export default function GanttApp() {
                         {resources.map((r) => <option key={r} value={r}>{r}</option>)}
                       </select>
                       <span style={{ width: 28, fontSize: 10, color: C.muted, textAlign: "right", flexShrink: 0 }}>{task["Days"]}d</span>
+                      <button
+                        onClick={() => askConfirm(`Delete task ${sn}?`, () => deleteTask(sn))}
+                        title="Delete task"
+                        style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: "0 2px", fontSize: 13, lineHeight: 1, flexShrink: 0, opacity: 0.4 }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = C.red; e.currentTarget.style.opacity = "1"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = C.muted; e.currentTarget.style.opacity = "0.4"; }}
+                      >×</button>
                     </div>
                   );
                 })}
@@ -908,12 +939,6 @@ export default function GanttApp() {
             Drag tasks between workers to reassign, or right-click a task for options.
           </div>
 
-          {unassigned.length > 0 && (
-            <div style={{ background: C.yellow + "18", border: `1px solid ${C.yellow}44`, borderRadius: 8, padding: "10px 16px", marginBottom: 24, fontSize: 12, color: C.yellow }}>
-              ⚠ {unassigned.length} task(s) unassigned — add them via the Gantt tab or add resources below
-            </div>
-          )}
-
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 16, alignItems: "start" }}>
             {workloadData.map((w) => {
               const isOver = dragOverPerson === w.person;
@@ -946,9 +971,20 @@ export default function GanttApp() {
                         {w.tasks.length} tasks · {w.totalDays} days
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace" }}>FINISHES</div>
-                      <div style={{ fontSize: 12, color: C.green, fontFamily: "'DM Mono', monospace", marginTop: 2 }}>{w.finish}</div>
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace" }}>FINISHES</div>
+                        <div style={{ fontSize: 12, color: C.green, fontFamily: "'DM Mono', monospace", marginTop: 2 }}>{w.finish}</div>
+                      </div>
+                      {w.tasks.some(t => !isTaskCompleted(t["Serial Number"])) && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); askConfirm(`Unassign all tasks from ${w.person}?`, () => unassignAllForPerson(w.person), "Unassign"); }}
+                          style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 5, padding: "2px 8px", cursor: "pointer", fontSize: 10 }}
+                          onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.yellow; e.currentTarget.style.color = C.yellow; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.muted; }}
+                          title={`Unassign all tasks from ${w.person}`}
+                        >Unassign all</button>
+                      )}
                     </div>
                   </div>
 
@@ -1036,6 +1072,98 @@ export default function GanttApp() {
                 </div>
               );
             })}
+
+            {/* ── Unassigned card ── */}
+            {unassigned.length > 0 && (() => {
+              const isOver = dragOverPerson === "__unassigned__";
+              const unassignedColor = UNASSIGNED_COLOR[themeKey];
+              return (
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setDragOverPerson("__unassigned__"); }}
+                  onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragOverPerson(null); }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    if (draggingTask && !isTaskCompleted(draggingTask.sn)) {
+                      setAssignments((a) => { const n = { ...a }; delete n[draggingTask.sn]; return n; });
+                    }
+                    setDraggingTask(null);
+                    setDragOverPerson(null);
+                  }}
+                  style={{
+                    background: isOver ? unassignedColor + "22" : C.card,
+                    border: `2px dashed ${isOver ? unassignedColor : unassignedColor + "88"}`,
+                    borderRadius: 12, padding: 20,
+                    transition: "border-color 0.15s, background 0.15s",
+                    minHeight: 120,
+                  }}
+                >
+                  {/* Header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 14 }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 15, color: unassignedColor }}>Unassigned</div>
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>
+                        {unassigned.length} task{unassigned.length !== 1 ? "s" : ""}
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); askConfirm(`Delete all ${unassigned.length} unassigned task(s)?`, deleteAllUnassigned); }}
+                      style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 5, padding: "2px 8px", cursor: "pointer", fontSize: 10, alignSelf: "flex-start" }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = C.red; e.currentTarget.style.color = C.red; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = C.border; e.currentTarget.style.color = C.muted; }}
+                    >Delete all</button>
+                  </div>
+
+                  {/* Task list */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {unassigned.map((t) => {
+                      const sn = t["Serial Number"];
+                      const isDragging = draggingTask?.sn === sn;
+                      const isCtxOpen = contextMenu?.sn === sn;
+                      const isTest = isTestTask(t["Description"]);
+                      const taskColor = isTest ? C.purple : unassignedColor;
+                      return (
+                        <div
+                          key={sn}
+                          draggable
+                          onDragStart={() => setDraggingTask({ sn, fromPerson: null })}
+                          onDragEnd={() => { setDraggingTask(null); setDragOverPerson(null); }}
+                          onContextMenu={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setContextMenu({ sn, x: e.clientX, y: e.clientY, currentPerson: null });
+                          }}
+                          style={{
+                            display: "flex", gap: 8, alignItems: "center",
+                            background: isCtxOpen ? C.accentDim : isDragging ? C.accentDim : taskColor + "18",
+                            border: `1px dashed ${isCtxOpen ? C.accent : isDragging ? C.accent : taskColor + "88"}`,
+                            borderStyle: isCtxOpen || isDragging ? "solid" : "dashed",
+                            borderRadius: 6, padding: "6px 10px",
+                            cursor: "grab", opacity: isDragging ? 0.5 : 1,
+                            transition: "opacity 0.15s, border-color 0.15s, background 0.15s",
+                            userSelect: "none",
+                          }}
+                        >
+                          <span style={{ fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace", width: 20, flexShrink: 0 }}>{sn}</span>
+                          {isTest && (
+                            <span style={{ background: C.purple, color: "#fff", borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0 }}>TEST</span>
+                          )}
+                          <span style={{ fontSize: 11, flex: 1, lineHeight: 1.35, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={t["Description"]}>
+                            {t["Description"]}
+                          </span>
+                          <span style={{ fontSize: 9, color: taskColor, whiteSpace: "nowrap", flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{t["Days"]}d</span>
+                          <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>
+                        </div>
+                      );
+                    })}
+                    {isOver && draggingTask && (
+                      <div style={{ border: `2px dashed ${unassignedColor}`, borderRadius: 6, padding: "10px", textAlign: "center", fontSize: 11, color: unassignedColor, marginTop: 4 }}>
+                        Drop here to unassign
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           {/* ── Context menu ── */}
@@ -1127,6 +1255,17 @@ export default function GanttApp() {
                   </div>
                 </>
               )}
+              {/* Delete task */}
+              <div style={{ borderTop: `1px solid ${C.border}`, padding: "4px 0" }}>
+                <div
+                  onClick={() => { const sn = contextMenu.sn; setContextMenu(null); askConfirm(`Delete task ${sn}?`, () => deleteTask(sn)); }}
+                  style={{ padding: "7px 14px", cursor: "pointer", color: C.red, fontSize: 12, fontWeight: 600, transition: "background 0.1s" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = C.red + "18"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                >
+                  Delete task
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -1216,6 +1355,16 @@ export default function GanttApp() {
           C={C}
           onSubmit={submitNewTask}
           onClose={() => setAddTaskModal(null)}
+        />
+      )}
+
+      {confirmDialog && (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          confirmLabel={confirmDialog.confirmLabel}
+          onConfirm={() => { confirmDialog.onConfirm(); setConfirmDialog(null); }}
+          onCancel={() => setConfirmDialog(null)}
+          C={C}
         />
       )}
     </div>
