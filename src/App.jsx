@@ -275,6 +275,9 @@ export default function GanttApp() {
   const [contextMenu, setContextMenu] = useState(null); // { sn, x, y, currentPerson }
   const [addTaskModal, setAddTaskModal] = useState(null); // null | { initialSerial }
   const [confirmDialog, setConfirmDialog] = useState(null); // null | { message, onConfirm }
+  const [sessionFileHandle, setSessionFileHandle] = useState(null); // FileSystemFileHandle | null
+  const [sessionFileName, setSessionFileName] = useState("gantt_session.xlsx");
+  const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'saved'
 
   function askConfirm(message, onConfirm, confirmLabel = "Delete") {
     setConfirmDialog({ message, onConfirm, confirmLabel });
@@ -350,11 +353,13 @@ export default function GanttApp() {
     setScreen("gantt");
   }
 
-  function handleFile(file) {
+  function handleFile(file, fileHandle = null) {
     if (!file) return;
     parseFile(file, (err, tasks, session) => {
       if (err) { alert("Error reading file: " + err.message); return; }
       if (session) {
+        if (fileHandle) setSessionFileHandle(fileHandle);
+        setSessionFileName(file.name);
         // Restore full session
         setRawTasks(tasks);
         setAssignments(session.assignments);
@@ -555,47 +560,30 @@ export default function GanttApp() {
     a.click();
   }
 
-  async function exportXLSX() {
+  async function buildSessionBlob() {
     const wb = new ExcelJS.Workbook();
-
-    // ── Sheet 1: Schedule ──
     const scheduleHeaders = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Integration Effort"];
     const scheduleRows = scheduledTasks.map((t) => [
       t["Serial Number"], t["Category"], t["Description"], t["Depends On"],
       getStatus(t["Serial Number"]), t["Complexity"], t["Days"], t._start, t._end,
-      assignments[t["Serial Number"]] || "",
-      progress[t["Serial Number"]] ?? 0,
-      t["Integration Effort"],
+      assignments[t["Serial Number"]] || "", progress[t["Serial Number"]] ?? 0, t["Integration Effort"],
     ]);
     const schedWS = wb.addWorksheet("Schedule");
     schedWS.addRow(scheduleHeaders);
     scheduleRows.forEach((r) => schedWS.addRow(r));
     [14, 22, 50, 14, 14, 12, 8, 12, 12, 16, 12, 18].forEach((w, i) => { schedWS.getColumn(i + 1).width = w; });
 
-    // ── Sheet 2: Session (everything needed to restore state) ──
     const sessionRows = [
-      ["GANTT SESSION DATA — import this file to restore your work"],
-      [],
-      ["PROJECT START", projectStart],
-      ["THEME", themeKey],
-      [],
-      ["RESOURCES"],
-      ...resources.map((r) => [r]),
-      [],
-      ["PUBLIC HOLIDAYS"],
-      ...holidays.map((h) => [h]),
-      [],
+      ["GANTT SESSION DATA — import this file to restore your work"], [],
+      ["PROJECT START", projectStart], ["THEME", themeKey], [],
+      ["RESOURCES"], ...resources.map((r) => [r]), [],
+      ["PUBLIC HOLIDAYS"], ...holidays.map((h) => [h]), [],
       ["VACATION DAYS", "Person", "Date"],
-      ...Object.entries(vacMap).flatMap(([person, dates]) =>
-        dates.map((d) => ["", person, d])
-      ),
-      [],
+      ...Object.entries(vacMap).flatMap(([person, dates]) => dates.map((d) => ["", person, d])), [],
       ["ASSIGNMENTS", "Serial Number", "Assignee"],
-      ...Object.entries(assignments).map(([sn, person]) => ["", sn, person]),
-      [],
+      ...Object.entries(assignments).map(([sn, person]) => ["", sn, person]), [],
       ["PROGRESS", "Serial Number", "Percent"],
-      ...Object.entries(progress).map(([sn, pct]) => ["", sn, pct]),
-      [],
+      ...Object.entries(progress).map(([sn, pct]) => ["", sn, pct]), [],
       ["STATUSES", "Serial Number", "Status"],
       ...Object.entries(taskStatuses).map(([sn, st]) => ["", sn, st]),
     ];
@@ -603,21 +591,93 @@ export default function GanttApp() {
     sessionRows.forEach((r) => sessWS.addRow(r));
     [30, 20, 20].forEach((w, i) => { sessWS.getColumn(i + 1).width = w; });
 
-    // ── Sheet 3: Workload summary ──
     const workloadHeaders = ["Person", "Tasks", "Total Days", "Finishes"];
-    const workloadRows = workloadData.map((w) => [w.person, w.tasks.length, w.totalDays, w.finish]);
     const wlWS = wb.addWorksheet("Workload");
     wlWS.addRow(workloadHeaders);
-    workloadRows.forEach((r) => wlWS.addRow(r));
+    workloadData.forEach((w) => wlWS.addRow([w.person, w.tasks.length, w.totalDays, w.finish]));
     [20, 10, 12, 14].forEach((w, i) => { wlWS.getColumn(i + 1).width = w; });
 
     const buffer = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "gantt_session.xlsx";
-    a.click();
-    URL.revokeObjectURL(a.href);
+    return new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  }
+
+  async function writeToHandle(handle, blob) {
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  }
+
+  async function quickSave() {
+    setSaveStatus("saving");
+    try {
+      const blob = await buildSessionBlob();
+
+      if (sessionFileHandle) {
+        try {
+          const perm = await sessionFileHandle.queryPermission({ mode: "readwrite" });
+          const granted = perm === "granted" ||
+            (await sessionFileHandle.requestPermission({ mode: "readwrite" })) === "granted";
+          if (granted) {
+            await writeToHandle(sessionFileHandle, blob);
+            setSaveStatus("saved");
+            setTimeout(() => setSaveStatus(null), 2000);
+            return;
+          }
+        } catch {}
+      }
+
+      // No usable handle — show picker if supported
+      if (window.showSaveFilePicker) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: sessionFileName,
+            types: [{ description: "Excel Workbook", accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] } }],
+          });
+          setSessionFileHandle(handle);
+          setSessionFileName(handle.name);
+          await writeToHandle(handle, blob);
+          setSaveStatus("saved");
+          setTimeout(() => setSaveStatus(null), 2000);
+        } catch (e) {
+          if (e.name !== "AbortError") throw e;
+          setSaveStatus(null);
+        }
+      } else {
+        // Fallback: trigger download
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = sessionFileName;
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setSaveStatus("saved");
+        setTimeout(() => setSaveStatus(null), 2000);
+      }
+    } catch {
+      setSaveStatus(null);
+    }
+  }
+
+  async function exportXLSX() {
+    const blob = await buildSessionBlob();
+    if (window.showSaveFilePicker) {
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: sessionFileName,
+          types: [{ description: "Excel Workbook", accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] } }],
+        });
+        setSessionFileHandle(handle);
+        setSessionFileName(handle.name);
+        await writeToHandle(handle, blob);
+      } catch (e) {
+        if (e.name !== "AbortError") throw e;
+      }
+    } else {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = sessionFileName;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
   }
 
   if (screen === "import") {
@@ -638,7 +698,12 @@ export default function GanttApp() {
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
+            onDrop={async (e) => {
+              e.preventDefault(); setDragOver(false);
+              let handle = null;
+              try { handle = await e.dataTransfer.items?.[0]?.getAsFileSystemHandle?.() ?? null; } catch {}
+              handleFile(e.dataTransfer.files[0], handle);
+            }}
             onClick={() => fileRef.current.click()}
             style={{
               border: `2px dashed ${dragOver ? C.accent : C.border}`, borderRadius: 16,
@@ -724,6 +789,12 @@ export default function GanttApp() {
         {undoHistory.length > 0 && (
           <button onClick={undoOptimization} style={{ background: C.yellow, border: "none", color: C.bg, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Undo last optimization">↶ Undo</button>
         )}
+        <button
+          onClick={quickSave}
+          disabled={saveStatus === "saving"}
+          title={sessionFileHandle ? `Quick Save → ${sessionFileName}` : "Quick Save (will ask where to save)"}
+          style={{ background: saveStatus === "saved" ? C.green : C.surface, border: `1px solid ${saveStatus === "saved" ? C.green : C.border}`, color: saveStatus === "saved" ? "#fff" : C.text, borderRadius: 6, padding: "4px 12px", cursor: saveStatus === "saving" ? "default" : "pointer", fontSize: 11, fontWeight: 600, transition: "background 0.2s, border-color 0.2s, color 0.2s" }}
+        >{saveStatus === "saving" ? "💾 Saving…" : saveStatus === "saved" ? "✓ Saved" : "💾 Quick Save"}</button>
         <button onClick={() => setScreen("import")} style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11 }}>↑ Import</button>
       </div>
 
