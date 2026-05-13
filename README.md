@@ -60,7 +60,8 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Toggle with the ☀️ / 🌙 button in the top bar or import screen
 
 ### 💾 Save & Restore Sessions
-- **Save Session (XLSX)** exports a full snapshot of your work
+- **💾 Quick Save** — toolbar button available on every tab; writes directly back to the file you loaded or last saved without showing a dialog. On the very first save it opens a file picker and remembers the chosen path for all future Quick Saves. If the browser doesn't support the File System Access API it falls back to a triggered download
+- **Save Session (XLSX)** (Settings tab) — same output as Quick Save; also stores the file handle so Quick Save targets it afterwards
 - Restoring is as simple as re-importing the saved file — all assignments, progress, holidays, vacations, and resources are fully recovered
 - No database or account required
 
@@ -159,7 +160,8 @@ If the `Days` column is empty, the app falls back to the `Complexity` column usi
 
 | Option | Description |
 |---|---|
-| 💾 Save Session (XLSX) | Full session snapshot — use this to save and continue later |
+| 💾 Quick Save | Toolbar button on every tab — saves directly to the previously used file (no dialog). Shows a picker on first use and remembers the path. Falls back to a download if the File System Access API is unavailable |
+| 💾 Save Session (XLSX) | Full session snapshot (Settings tab) — opens a save dialog; also registers the file for Quick Save |
 | Export CSV | Scheduled task list with dates — for use in other tools |
 | Print / PDF | Prints the current view via the browser print dialog |
 
@@ -173,6 +175,7 @@ src/
 ├── App.jsx                        # UI, import/export, drag-and-drop, theme
 ├── App.test.jsx                   # Smoke tests for the import screen
 ├── App.integration.test.jsx       # Integration tests for Gantt and Workload views
+├── App.quicksave.test.jsx         # Integration tests for Quick Save (file handle, picker, fallback)
 ├── index.jsx                      # React root mount
 ├── setupTests.js                  # Vitest global setup
 ├── components/
