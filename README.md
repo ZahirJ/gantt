@@ -17,6 +17,8 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Week and month zoom levels
 - Filter tasks by category
 - Test tasks are highlighted with a distinct color and TEST badge
+- **Delete task** — click the `×` button on any row to remove a single task (confirmation required)
+- **Delete all unassigned** — toolbar button removes every task with no assignee at once (visible only when unassigned tasks exist, confirmation required)
 
 ### 👥 Resource Management
 - Assign tasks to team members via dropdown in the Gantt view
@@ -27,7 +29,9 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Per-person cards showing task list, total days, and predicted finish date
 - Relative workload bar (green → yellow → red) for quick overload spotting
 - **Drag and drop** tasks between worker cards to reassign (completed tasks are locked)
-- **Right-click** any task for a context menu to set status or reassign to any worker
+- **Right-click** any task for a context menu to set status, reassign, or delete the task
+- **Unassign all** button on each resource card — moves all of that person's tasks to Unassigned (confirmation required)
+- **Unassigned card** — a dedicated card lists all tasks with no assignee; drag a task from it to any resource card to assign, or drop any task onto it to unassign; includes a **Delete all** action to remove all unassigned tasks at once
 - Completed tasks show a **DONE** badge and cannot be dragged or reassigned
 - All changes recalculate the Gantt instantly
 
@@ -167,10 +171,18 @@ If the `Days` column is empty, the app falls back to the `Complexity` column usi
 index.html                         # Vite entry point
 src/
 ├── App.jsx                        # UI, import/export, drag-and-drop, theme
+├── App.test.jsx                   # Smoke tests for the import screen
+├── App.integration.test.jsx       # Integration tests for Gantt and Workload views
 ├── index.jsx                      # React root mount
 ├── setupTests.js                  # Vitest global setup
+├── components/
+│   ├── AddTaskModal.jsx           # Multi-step modal for creating a new task
+│   ├── ConfirmDialog.jsx          # Reusable confirmation dialog for destructive actions
+│   └── ConfirmDialog.test.jsx     # Unit tests for ConfirmDialog
 └── utils/
     ├── scheduleUtils.js           # Pure scheduling helpers + levelOptimize (shared with tests)
+    ├── taskMutations.js           # Pure helpers for task deletion and unassignment
+    ├── taskMutations.test.js      # Unit tests for task mutation helpers
     ├── optimize.js                # Legacy greedy optimizer (kept for its test suite)
     ├── levelOptimize.test.js      # Optimizer tests using the Objectstore workplan fixture
     ├── optimize.test.js           # Unit tests for the legacy optimizer
