@@ -1050,6 +1050,11 @@ export default function GanttApp() {
                   <span style={{ fontSize: 10, color: C.muted, width: 80 }}>Assignee</span>
                   <span style={{ fontSize: 10, color: C.muted, width: 28, textAlign: "right" }}>Days</span>
                 </div>
+                {scheduledTasks.some(t => milestones[t["Serial Number"]] && t._end) && (
+                  <div style={{ height: 110, position: "sticky", top: 56, zIndex: 2, background: C.surface, borderBottom: `1px solid ${C.red}22`, display: "flex", alignItems: "flex-end", padding: "0 12px 6px" }}>
+                    <span style={{ fontSize: 10, color: C.red, fontFamily: "'DM Mono', monospace", opacity: 0.6 }}>milestones</span>
+                  </div>
+                )}
                 {scheduledTasks.map((task, i) => {
                   const sn = task["Serial Number"];
                   const currentStatus = getStatus(sn);
@@ -1086,6 +1091,13 @@ export default function GanttApp() {
                       </select>
                       <span style={{ width: 28, fontSize: 10, color: C.muted, textAlign: "right", flexShrink: 0 }}>{task["Days"]}d</span>
                       <button
+                        onClick={() => setMilestones(prev => { const n = { ...prev }; if (n[sn]) delete n[sn]; else n[sn] = true; return n; })}
+                        title={milestones[sn] ? "Remove milestone" : "Mark as key milestone"}
+                        style={{ background: "none", border: "none", cursor: "pointer", padding: "0 2px", fontSize: 12, lineHeight: 1, flexShrink: 0, opacity: milestones[sn] ? 1 : 0.25, transition: "opacity 0.15s" }}
+                        onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = milestones[sn] ? "1" : "0.25"; }}
+                      >⭐</button>
+                      <button
                         onClick={() => askConfirm(`Delete task ${sn}?`, () => deleteTask(sn))}
                         title="Delete task"
                         style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: "0 2px", fontSize: 13, lineHeight: 1, flexShrink: 0, opacity: 0.4 }}
@@ -1119,8 +1131,52 @@ export default function GanttApp() {
                   ))}
                 </div>
 
+                {/* Milestone labels row — sticky just below headers, only when milestones exist */}
+                {scheduledTasks.some(t => milestones[t["Serial Number"]] && t._end) && (() => {
+                  const msItems = scheduledTasks.filter(t => milestones[t["Serial Number"]] && t._end);
+                  const rowH_ms = 110;
+                  return (
+                    <div style={{ height: rowH_ms, position: "sticky", top: 56, zIndex: 2, background: C.surface, borderBottom: `1px solid ${C.red}22` }}>
+                      {/* Stem lines drawn through the row */}
+                      <svg style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }} width={totalW} height={rowH_ms}>
+                        {msItems.map(t => {
+                          const lx = taskX(t) + taskW(t);
+                          return <line key={t["Serial Number"]} x1={lx} y1={0} x2={lx} y2={rowH_ms} stroke={C.red} strokeWidth={2} strokeDasharray="3 5" strokeOpacity={0.75} />;
+                        })}
+                      </svg>
+                      {/* Vertical text labels, bottom-aligned to connect with the line below */}
+                      {msItems.map(t => {
+                        const lx = taskX(t) + taskW(t);
+                        return (
+                          <div key={`mlabel-${t["Serial Number"]}`} style={{
+                            position: "absolute", left: lx, top: 0, bottom: 0,
+                            display: "flex", alignItems: "flex-end", justifyContent: "center",
+                            paddingBottom: 3, transform: "translateX(-50%)",
+                            zIndex: 1,
+                          }}>
+                            <span
+                              onMouseEnter={e => setBarTooltip({ text: `⭐ ${t["Description"]}`, x: e.clientX, y: e.clientY })}
+                              onMouseMove={e => setBarTooltip(v => v ? { ...v, x: e.clientX, y: e.clientY } : v)}
+                              onMouseLeave={() => setBarTooltip(null)}
+                              style={{
+                                writingMode: "vertical-rl", transform: "rotate(180deg)",
+                                fontSize: 12, fontWeight: 600, color: C.red,
+                                background: C.surface,
+                                padding: "4px 3px",
+                                fontFamily: "'DM Sans', sans-serif",
+                                maxHeight: rowH_ms - 6,
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                                pointerEvents: "auto", cursor: "default",
+                              }}>⭐ {t["Description"]}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+
                 {/* SVG: grid lines + today (behind bars) */}
-                <svg style={{ position: "absolute", top: 56, left: 0, pointerEvents: "none" }} width={totalW} height={totalH}>
+                <svg style={{ position: "absolute", top: 56 + (scheduledTasks.some(t => milestones[t["Serial Number"]] && t._end) ? 110 : 0), left: 0, pointerEvents: "none" }} width={totalW} height={totalH}>
                   {workDates.map((_, i) => (
                     <line key={i} x1={i * colW} y1={0} x2={i * colW} y2={totalH} stroke={C.border} strokeWidth={0.4} strokeOpacity={0.5} />
                   ))}
@@ -1196,7 +1252,7 @@ export default function GanttApp() {
                 </div>
 
                 {/* SVG: dependency arrows + milestone lines (above bars) */}
-                <svg style={{ position: "absolute", top: 56, left: 0, pointerEvents: "none", overflow: "visible", zIndex: 2 }} width={totalW} height={totalH}>
+                <svg style={{ position: "absolute", top: 56 + (scheduledTasks.some(t => milestones[t["Serial Number"]] && t._end) ? 110 : 0), left: 0, pointerEvents: "none", overflow: "visible", zIndex: 2 }} width={totalW} height={totalH}>
                   {scheduledTasks.filter(t => milestones[t["Serial Number"]] && t._end).map(t => {
                     const lineX = taskX(t) + taskW(t);
                     return (
