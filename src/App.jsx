@@ -289,6 +289,7 @@ export default function GanttApp() {
   const [fixedStartDates, setFixedStartDates] = useState({}); // { [sn]: "YYYY-MM-DD" }
   const [editTaskModal, setEditTaskModal] = useState(null); // null | sn
   const [ganttContextMenu, setGanttContextMenu] = useState(null); // null | { sn, x, y }
+  const [barTooltip, setBarTooltip] = useState(null); // null | { text, x, y }
 
   function askConfirm(message, onConfirm, confirmLabel = "Delete") {
     setConfirmDialog({ message, onConfirm, confirmLabel });
@@ -980,7 +981,12 @@ export default function GanttApp() {
                         background: i % 2 === 0 ? "transparent" : C.surface + "44",
                       }}>
                         <div
-                          title={fixedStartDates[sn] ? `Fixed start: ${fixedStartDates[sn]}` : undefined}
+                          onMouseEnter={(e) => {
+                            const text = task["Description"] + (fixedStartDates[sn] ? ` · Fixed start: ${fixedStartDates[sn]}` : "");
+                            setBarTooltip({ text, x: e.clientX, y: e.clientY });
+                          }}
+                          onMouseMove={(e) => setBarTooltip(t => t ? { ...t, x: e.clientX, y: e.clientY } : t)}
+                          onMouseLeave={() => setBarTooltip(null)}
                           style={{
                             position: "absolute", left: x, top: 8, width: w, height: rowH - 16,
                             background: col + "30",
@@ -988,12 +994,14 @@ export default function GanttApp() {
                             borderColor: col + "88", borderRadius: 4,
                             overflow: "hidden",
                             boxShadow: fixedStartDates[sn] ? `inset 3px 0 0 ${C.yellow}` : undefined,
+                            cursor: "default",
                           }}>
                           <div style={{ width: `${pct}%`, height: "100%", background: col + "44" }} />
                           {w > 44 && (
                             <div style={{
                               position: "absolute", inset: 0, display: "flex", alignItems: "center",
-                              paddingLeft: 6, gap: 4, fontSize: 9, color: col, overflow: "hidden", whiteSpace: "nowrap",
+                              paddingLeft: 6, paddingRight: 6, gap: 4, fontSize: 9, color: col,
+                              overflow: "hidden", whiteSpace: "nowrap",
                               fontFamily: "'DM Mono', monospace",
                             }}>
                               {isTest && (
@@ -1005,7 +1013,9 @@ export default function GanttApp() {
                               {fixedStartDates[sn] && (
                                 <span style={{ background: C.yellow + "33", color: C.yellow, borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0, border: `1px solid ${C.yellow}66` }}>FIX</span>
                               )}
-                              {pct > 0 ? `${pct}% · ` : ""}{task["Description"]?.slice(0, 22)}
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                                {pct > 0 ? `${pct}% · ` : ""}{task["Description"]}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -1087,6 +1097,19 @@ export default function GanttApp() {
               </div>
             ))}
           </div>
+
+          {/* Bar tooltip */}
+          {barTooltip && (
+            <div style={{
+              position: "fixed", left: barTooltip.x + 14, top: barTooltip.y - 32,
+              background: C.card, border: `1px solid ${C.border}`,
+              borderRadius: 6, padding: "5px 10px",
+              fontSize: 12, color: C.text,
+              boxShadow: "0 4px 16px rgba(0,0,0,0.3)",
+              pointerEvents: "none", zIndex: 2000,
+              maxWidth: 320, whiteSpace: "pre-wrap", wordBreak: "break-word",
+            }}>{barTooltip.text}</div>
+          )}
         </div>
       )}
 
