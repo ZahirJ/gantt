@@ -83,6 +83,9 @@ describe('Quick Save — fallback download (no showSaveFilePicker)', () => {
     await loadTasks();
     const createSpy = vi.spyOn(document, 'createElement');
     fireEvent.click(screen.getByRole('button', { name: /quick save/i }));
+    // Name prompt appears on first save with no project name and no picker — dismiss it
+    await waitFor(() => expect(screen.getByRole('button', { name: /skip/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /skip/i }));
     await waitFor(() => expect(screen.getByRole('button', { name: /✓ saved/i })).toBeInTheDocument());
     const anchor = createSpy.mock.results.find(r => r.value?.tagName === 'A')?.value;
     expect(anchor).toBeDefined();
@@ -92,6 +95,9 @@ describe('Quick Save — fallback download (no showSaveFilePicker)', () => {
   test('button shows "✓ Saved" after download completes', async () => {
     await loadTasks();
     fireEvent.click(screen.getByRole('button', { name: /quick save/i }));
+    // Name prompt appears — dismiss it
+    await waitFor(() => expect(screen.getByRole('button', { name: /skip/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /skip/i }));
     await waitFor(() => expect(screen.getByRole('button', { name: /✓ saved/i })).toBeInTheDocument());
   });
 
