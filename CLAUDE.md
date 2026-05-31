@@ -22,29 +22,31 @@ This is a single-page React app with **no backend, no routing, and no external s
 - `src/utils/taskMutations.js` — pure helpers for task deletion and unassignment (`applyDeleteTask`, `applyDeleteAllUnassigned`, `applyUnassignAllForPerson`); take plain state objects and return new state objects without side effects
 - `src/utils/optimize.js` — legacy standalone optimizer (greedy local-search); kept for its test suite
 - `src/components/AddTaskModal.jsx` — multi-step modal for creating a new task
+- `src/components/EditTaskModal.jsx` — single-page modal for editing an existing task; accepts `task`, `fixedStartDate`, `resources`, `rawTasks`, `categories`, `C`, `onSubmit(sn, draft)`, `onClose` props; Serial Number is read-only
 - `src/components/ConfirmDialog.jsx` — reusable confirmation dialog; accepts `message`, `confirmLabel` (default `"Delete"`), `onConfirm`, `onCancel`, and `C` (theme) props
 
 ### Key data flows in App.jsx
 
-**State**: React `useState` holds tasks, assignments (`taskId → assigneeName`), resources, holidays, vacations, progress (% per task), taskStatuses (status label per task), theme, active tab, `confirmDialog` (pending confirmation action), `sessionFileHandle` (`FileSystemFileHandle | null`), `sessionFileName` (suggested filename for the save picker), and `saveStatus` (`null | 'saving' | 'saved'` — drives the Quick Save button feedback flash).
+**State**: React `useState` holds tasks, assignments (`taskId → assigneeName`), resources, holidays, vacations, progress (% per task), taskStatuses (status label per task), theme, active tab, `confirmDialog` (pending confirmation action), `sessionFileHandle` (`FileSystemFileHandle | null`), `sessionFileName` (suggested filename for the save picker), `saveStatus` (`null | 'saving' | 'saved'` — drives the Quick Save button feedback flash), `fixedStartDates` (`{ [sn]: "YYYY-MM-DD" }` — optional per-task start date floors), `editTaskModal` (`null | sn` — which task the Edit modal is open for), and `ganttContextMenu` (`null | { sn, x, y }` — the Gantt right-click context menu).
 
-**Scheduling engine** (`scheduleTasks` in `scheduleUtils.js`): Produces computed start/end dates for each task. Called via `useMemo` on every render. Respects:
+**Scheduling engine** (`scheduleTasks` in `scheduleUtils.js`): Produces computed start/end dates for each task. Signature: `scheduleTasks(rawTasks, assignments, holidays, vacMap, projectStart, fixedStartDates = {})`. Called via `useMemo` on every render. Respects:
 - 5-day work weeks, skipping weekends
 - Global public holidays
 - Per-person vacation days
 - Finish-to-Start dependencies (by Serial Number)
 - One task per person at a time (no parallel splitting)
 - Serial Number ordering as a tiebreaker
+- Optional fixed start date per task (acts as a floor — task cannot start before that date, but deps still apply; downstream tasks shift accordingly)
 
 **Import path**: `parseFile` reads `.xlsx`/`.csv` via ExcelJS (`wb.xlsx.load`). CSV is read via `FileReader` and parsed manually. Detects session files by checking for both `Session` and `Schedule` sheet names. Task files go through `normalizeTasks` which normalizes column names (including case-insensitive "Depends on/On"), filters self-referencing deps, and applies complexity→days fallback (`S=1, M=3, L=5, XL=10`).
 
-**Export path**: `buildSessionBlob()` builds a `Blob` containing three ExcelJS sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses and `PROJECT START`), `Workload` (per-person summary). Session files can be re-imported to fully restore state. A separate CSV export path (via Blob URL) writes only the scheduled task list.
+**Export path**: `buildSessionBlob()` builds a `Blob` containing three ExcelJS sheets — `Schedule` (task rows with dates and progress), `Session` (key-value state dump including statuses, `PROJECT START`, and `FIXED START DATES`), `Workload` (per-person summary). Session files can be re-imported to fully restore state. A separate CSV export path (via Blob URL) writes only the scheduled task list.
 
 **Quick Save** (`quickSave()` in App.jsx): writes the session blob directly to `sessionFileHandle` when one is stored and permission is granted; otherwise opens `window.showSaveFilePicker` (File System Access API) and stores the returned `FileSystemFileHandle` + its `name` as `sessionFileName`. Falls back to a triggered anchor download if the API is unavailable. `sessionFileName` is kept in sync with the chosen filename so subsequent saves and the picker's `suggestedName` always reflect the last saved path. `sessionFileHandle` is populated either from a session-file drag-drop (via `item.getAsFileSystemHandle()`) or after the first manual save via the picker. `exportXLSX()` (Settings tab) also uses `showSaveFilePicker` and stores the handle, so Quick Save works after a manual save too.
 
 **Date formatting** (`fmtDate` in `scheduleUtils.js`): All dates are stored and compared as `YYYY-MM-DD` strings. Uses local date components (`getFullYear/getMonth/getDate`) rather than `toISOString()` to avoid UTC-offset shifts when converting Date objects returned by ExcelJS from date-typed cells.
 
-**Optimization** (`levelOptimize` in `scheduleUtils.js`): Minimises the overall project finish date (makespan) by moving task units across resources. A **unit** = one non-test lead task + all test tasks that directly depend on it. Key behaviours:
+**Optimization** (`levelOptimize` in `scheduleUtils.js`): Minimises the overall project finish date (makespan) by moving task units across resources. Signature: `levelOptimize(tasks, resources, assignments, progress, holidays, vacMap, projectStart, fixedStartDates = {})` — `fixedStartDates` is threaded through to `scheduleTasks`. A **unit** = one non-test lead task + all test tasks that directly depend on it. Key behaviours:
 - Tasks with Status = Completed are filtered out on file import (before any state is set)
 - Units containing any completed task are excluded from all moves
 - Initial round-robin (when any resource is empty) uses **priority order**: topological depth ascending, then transitive dependent count descending — tasks that unblock the most downstream work are assigned first
@@ -58,7 +60,7 @@ Tasks have four statuses: `Open`, `In Progress`, `Completed`, `Open(May not need
 - Setting "In Progress" → progress = max(current, 10)
 - Setting "Open" / other → progress = 0
 
-Status can be changed via the inline `<select>` in the Gantt task list or via the right-click context menu in the Workload view.
+Status can be changed via the inline `<select>` in the Gantt task list, via the right-click context menu in the Workload view, or via the Edit Task modal (accessible from both views).
 
 ### Test task identification
 
@@ -74,13 +76,13 @@ Tasks matching this pattern get a distinct purple color and TEST badge in both v
 
 ### Task deletion
 
-Three operations mutate task state together (`rawTasks`, `assignments`, `progress`, `taskStatuses`). The pure logic lives in `taskMutations.js`; the React wrappers in App.jsx call `applyDeleteTask` / `applyDeleteAllUnassigned` / `applyUnassignAllForPerson` and dispatch the results to their respective state setters.
+Three operations mutate task state together (`rawTasks`, `assignments`, `progress`, `taskStatuses`). The pure logic lives in `taskMutations.js`; the React wrappers in App.jsx call `applyDeleteTask` / `applyDeleteAllUnassigned` / `applyUnassignAllForPerson` and dispatch the results to their respective state setters. Both delete paths also clean up `fixedStartDates` for the removed tasks.
 
 All destructive actions go through `askConfirm(message, onConfirm, confirmLabel?)` which sets `confirmDialog` state and renders `<ConfirmDialog>`. The label defaults to `"Delete"` and is overridden to `"Unassign"` for unassignment actions.
 
 Entry points:
 - `×` button on each Gantt list row → delete single task
-- Right-click context menu "Delete task" (Workload view) → delete single task
+- Right-click context menu "Delete task" (Gantt or Workload view) → delete single task
 - Toolbar "✕ Unassigned" button → delete all unassigned tasks (visible only when unassigned tasks exist)
 - Resource card "Unassign all" button → unassign all tasks for that person
 - Unassigned card "Delete all" button → delete all unassigned tasks
@@ -88,6 +90,30 @@ Entry points:
 ### Unassigned card (Workload tab)
 
 When unassigned tasks exist, an "Unassigned" card appears at the end of the resource grid with a dashed border. Tasks in it are draggable to any resource card to assign them. Any assigned task can be dragged onto the Unassigned card to unassign it ("Drop here to unassign" hint appears). The card has a "Delete all" button with confirmation.
+
+### Fixed start date
+
+`fixedStartDates` (`{ [sn]: "YYYY-MM-DD" }`) is an optional per-task constraint. When set, the task's computed start is floored to that date — it will not begin before it, but will still start later if a dependency finishes after it or the assignee is busy. Downstream dependencies shift naturally. Set via the Edit Task modal; persisted in the `FIXED START DATES` section of the Session sheet. Cleared automatically when a task is deleted.
+
+Visual indicators: Gantt bars show a yellow left-edge stripe (`inset box-shadow`) and a **FIX** badge; workload cards show a **FIX** chip. Both have a tooltip with the fixed date.
+
+### Edit Task modal
+
+`EditTaskModal.jsx` is a single-page (no steps) form for editing an existing task. Editable fields: Description, Category, Days, Complexity, Status, Depends On, Assignee, Fixed Start Date, Integration Effort. Serial Number is always read-only. Assignee and Status are pre-populated from live state (not from the stale import value stored in `rawTasks`).
+
+`submitEditTask(sn, draft)` in App.jsx updates `rawTasks` (task fields), `assignments`, `taskStatuses`/`progress` (via `setTaskStatus`), and `fixedStartDates`.
+
+`openEditModal(sn)` closes both context menus before setting `editTaskModal`.
+
+Entry points:
+- Right-click any Gantt task row → "Edit task…" in the Gantt mini context menu (`ganttContextMenu` state)
+- Right-click any Workload task card → "Edit task…" as the first item in the existing context menu
+
+### Right-click context menus
+
+**Gantt** (`ganttContextMenu`): triggered by `onContextMenu` on each label-column row. Shows "Edit task…" and "Delete task". Dismissed by clicking anywhere in the Gantt tab div.
+
+**Workload** (`contextMenu`): existing menu; now includes "Edit task…" as the first item above the STATUS section. Dismissed by clicking anywhere in the Workload tab div.
 
 ### Tabs
 
