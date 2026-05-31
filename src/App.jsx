@@ -193,7 +193,7 @@ function parseFile(file, callback) {
       const sessRaw = wsToAoa(wb.getWorksheet("Session"));
       const tasks = normalizeTasks(schedRows);
 
-      const session = { projectName: "", projectStart: null, themeKey: null, resources: [], holidays: [], vacMap: {}, assignments: {}, progress: {}, statuses: {}, fixedStartDates: {} };
+      const session = { projectName: "", projectStart: null, themeKey: null, resources: [], holidays: [], vacMap: {}, assignments: {}, progress: {}, statuses: {}, fixedStartDates: {}, milestones: {} };
       let mode = null;
       for (const row of sessRaw) {
         const cell0 = String(row[0] ?? "").trim();
@@ -209,6 +209,7 @@ function parseFile(file, callback) {
         if (cell0 === "PROGRESS") { mode = "progress"; continue; }
         if (cell0 === "STATUSES") { mode = "statuses"; continue; }
         if (cell0 === "FIXED START DATES") { mode = "fixedStartDates"; continue; }
+        if (cell0 === "MILESTONES") { mode = "milestones"; continue; }
         if (!cell0 && !cell1 && !cell2) { mode = null; continue; }
         if (mode === "resources" && cell0) session.resources.push(cell0);
         if (mode === "holidays" && cell0) session.holidays.push(cell0);
@@ -220,6 +221,7 @@ function parseFile(file, callback) {
         if (mode === "progress" && cell1) session.progress[cell1] = Number(cell2);
         if (mode === "statuses" && cell1) session.statuses[cell1] = cell2;
         if (mode === "fixedStartDates" && cell1) session.fixedStartDates[cell1] = cell2;
+        if (mode === "milestones" && cell1) session.milestones[cell1] = true;
       }
 
       schedRows.forEach((r) => {
@@ -256,6 +258,10 @@ function normalizeTasks(rows) {
     const fsdRaw = row["Fixed Start Date"] ?? row["fixed start date"] ?? row["Fixed start date"] ?? "";
     const fixedStartDate = String(fsdRaw).trim();
 
+    // Key Milestone column (optional): "true"/"yes"/"1" → "true"
+    const kmRaw = row["Key Milestone"] ?? row["key milestone"] ?? row["Key milestone"] ?? "";
+    const keyMilestone = ["true", "yes", "1"].includes(String(kmRaw).trim().toLowerCase()) ? "true" : "";
+
     return {
       ...row,
       "Serial Number": serial,
@@ -264,6 +270,7 @@ function normalizeTasks(rows) {
       "Assignee": row["Assignee"] || "",
       "Status": row["Status"] || "Open",
       "Fixed Start Date": fixedStartDate,
+      "Key Milestone": keyMilestone,
     };
   });
 }
@@ -312,6 +319,7 @@ export default function GanttApp() {
   const [sessionFileName, setSessionFileName] = useState("gantt_session.xlsx");
   const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'saved'
   const [fixedStartDates, setFixedStartDates] = useState({}); // { [sn]: "YYYY-MM-DD" }
+  const [milestones, setMilestones] = useState({}); // { [sn]: true } — key milestone flag
   const [editTaskModal, setEditTaskModal] = useState(null); // null | sn
   const [ganttContextMenu, setGanttContextMenu] = useState(null); // null | { sn, x, y }
   const [barTooltip, setBarTooltip] = useState(null); // null | { text, x, y }
@@ -326,7 +334,7 @@ export default function GanttApp() {
     if (skipDirtyRef.current) { skipDirtyRef.current = false; return; }
     if (screen === "gantt") setIsDirty(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawTasks, assignments, progress, taskStatuses, fixedStartDates, resources, holidays, vacMap, projectStart]);
+  }, [rawTasks, assignments, progress, taskStatuses, fixedStartDates, milestones, resources, holidays, vacMap, projectStart]);
 
   function askConfirm(message, onConfirm, confirmLabel = "Delete") {
     setConfirmDialog({ message, onConfirm, confirmLabel });
@@ -349,6 +357,7 @@ export default function GanttApp() {
     const r = applyDeleteTask(sn, rawTasks, assignments, progress, taskStatuses);
     setRawTasks(r.rawTasks); setAssignments(r.assignments); setProgress(r.progress); setTaskStatuses(r.taskStatuses);
     setFixedStartDates(prev => { const n = { ...prev }; delete n[sn]; return n; });
+    setMilestones(prev => { const n = { ...prev }; delete n[sn]; return n; });
   }
 
   function unassignAllForPerson(person) {
@@ -360,6 +369,7 @@ export default function GanttApp() {
     setRawTasks(r.rawTasks); setProgress(r.progress); setTaskStatuses(r.taskStatuses);
     const remainingSNs = new Set(r.rawTasks.map(t => t["Serial Number"]));
     setFixedStartDates(prev => Object.fromEntries(Object.entries(prev).filter(([sn]) => remainingSNs.has(sn))));
+    setMilestones(prev => Object.fromEntries(Object.entries(prev).filter(([sn]) => remainingSNs.has(sn))));
   }
 
   function submitEditTask(sn, draft) {
@@ -385,6 +395,12 @@ export default function GanttApp() {
     setFixedStartDates(prev => {
       const n = { ...prev };
       if (draft.fixedStartDate) n[sn] = draft.fixedStartDate;
+      else delete n[sn];
+      return n;
+    });
+    setMilestones(prev => {
+      const n = { ...prev };
+      if (draft.keyMilestone) n[sn] = true;
       else delete n[sn];
       return n;
     });
@@ -441,6 +457,9 @@ export default function GanttApp() {
     const importedFSD = {};
     tasks.forEach((t) => { if (t["Fixed Start Date"]) importedFSD[t["Serial Number"]] = t["Fixed Start Date"]; });
     setFixedStartDates(importedFSD);
+    const importedMilestones = {};
+    tasks.forEach((t) => { if (t["Key Milestone"] === "true") importedMilestones[t["Serial Number"]] = true; });
+    setMilestones(importedMilestones);
     const people = [...new Set(tasks.map((t) => t["Assignee"]).filter(Boolean))];
     setResources((prev) => [...new Set([...prev, ...people])]);
     setScreen("gantt");
@@ -481,6 +500,7 @@ export default function GanttApp() {
         setHolidays(session.holidays);
         setVacMap(session.vacMap);
         setFixedStartDates(session.fixedStartDates || {});
+        setMilestones(session.milestones || {});
         setProjectName(session.projectName || "");
         setScreen("gantt");
       } else {
@@ -692,17 +712,18 @@ export default function GanttApp() {
 
   async function buildSessionBlob() {
     const wb = new ExcelJS.Workbook();
-    const scheduleHeaders = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Integration Effort", "Fixed Start Date"];
+    const scheduleHeaders = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Integration Effort", "Fixed Start Date", "Key Milestone"];
     const scheduleRows = scheduledTasks.map((t) => [
       t["Serial Number"], t["Category"], t["Description"], t["Depends On"],
       getStatus(t["Serial Number"]), t["Complexity"], t["Days"], t._start, t._end,
       assignments[t["Serial Number"]] || "", progress[t["Serial Number"]] ?? 0, t["Integration Effort"],
       fixedStartDates[t["Serial Number"]] || "",
+      milestones[t["Serial Number"]] ? "true" : "",
     ]);
     const schedWS = wb.addWorksheet("Schedule");
     schedWS.addRow(scheduleHeaders);
     scheduleRows.forEach((r) => schedWS.addRow(r));
-    [14, 22, 50, 14, 14, 12, 8, 12, 12, 16, 12, 18, 14].forEach((w, i) => { schedWS.getColumn(i + 1).width = w; });
+    [14, 22, 50, 14, 14, 12, 8, 12, 12, 16, 12, 18, 14, 14].forEach((w, i) => { schedWS.getColumn(i + 1).width = w; });
 
     const sessionRows = [
       ["GANTT SESSION DATA — import this file to restore your work"], [],
@@ -721,6 +742,9 @@ export default function GanttApp() {
       [],
       ["FIXED START DATES", "Serial Number", "Date"],
       ...Object.entries(fixedStartDates).map(([sn, d]) => ["", sn, d]),
+      [],
+      ["MILESTONES", "Serial Number"],
+      ...Object.keys(milestones).filter(sn => milestones[sn]).map(sn => ["", sn]),
     ];
     const sessWS = wb.addWorksheet("Session");
     sessionRows.forEach((r) => sessWS.addRow(r));
@@ -1157,6 +1181,9 @@ export default function GanttApp() {
                               {fixedStartDates[sn] && (
                                 <span style={{ background: C.yellow + "33", color: C.yellow, borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0, border: `1px solid ${C.yellow}66` }}>FIX</span>
                               )}
+                              {milestones[sn] && (
+                                <span title="Key milestone" style={{ fontSize: 11, flexShrink: 0, lineHeight: 1 }}>⭐</span>
+                              )}
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
                                 {pct > 0 ? `${pct}% · ` : ""}{task["Description"]}
                               </span>
@@ -1168,8 +1195,17 @@ export default function GanttApp() {
                   })}
                 </div>
 
-                {/* SVG: dependency arrows (above bars) */}
+                {/* SVG: dependency arrows + milestone lines (above bars) */}
                 <svg style={{ position: "absolute", top: 56, left: 0, pointerEvents: "none", overflow: "visible", zIndex: 2 }} width={totalW} height={totalH}>
+                  {scheduledTasks.filter(t => milestones[t["Serial Number"]] && t._end).map(t => {
+                    const lineX = taskX(t) + taskW(t);
+                    return (
+                      <line key={`ms-${t["Serial Number"]}`}
+                        x1={lineX} y1={0} x2={lineX} y2={totalH}
+                        stroke={C.red} strokeWidth={2} strokeDasharray="3 5" strokeOpacity={0.75}
+                      />
+                    );
+                  })}
                   {getArrows().map((a) => {
                     // Smooth cubic bezier: horizontal tangents at both ends
                     let d;
@@ -1722,6 +1758,7 @@ export default function GanttApp() {
           <EditTaskModal
             task={taskWithCurrentAssignee}
             fixedStartDate={fixedStartDates[editTaskModal] || ""}
+            keyMilestone={milestones[editTaskModal] || false}
             resources={resources}
             rawTasks={rawTasks}
             categories={categories}
