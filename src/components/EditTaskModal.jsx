@@ -3,7 +3,7 @@ import { useState } from "react";
 const SIZE_DAYS_MAP = { S: "1", M: "3", L: "5", XL: "10" };
 const TASK_STATUSES = ["Open", "In Progress", "Completed", "Open(May not need fix)"];
 
-export default function EditTaskModal({ task, fixedStartDate, resources, rawTasks, categories, C, onSubmit, onClose }) {
+export default function EditTaskModal({ task, fixedStartDate, keyMilestone = false, resources, rawTasks, categories, C, onSubmit, onClose }) {
   const [draft, setDraft] = useState({
     description: task["Description"] || "",
     category: task["Category"] || "",
@@ -14,6 +14,7 @@ export default function EditTaskModal({ task, fixedStartDate, resources, rawTask
     assignee: task["Assignee"] || "",
     integrationEffort: task["Integration Effort"] || "",
     fixedStartDate: fixedStartDate || "",
+    keyMilestone: keyMilestone,
     daysManuallySet: false,
   });
   const [error, setError] = useState("");
@@ -166,6 +167,23 @@ export default function EditTaskModal({ task, fixedStartDate, resources, rawTask
               onChange={e => set("integrationEffort", e.target.value)}
               placeholder="Optional"
             />
+          </div>
+
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: draft.keyMilestone ? C.red + "11" : C.inputBg, border: `1px solid ${draft.keyMilestone ? C.red + "55" : C.border}`, borderRadius: 8, cursor: "pointer" }} onClick={() => set("keyMilestone", !draft.keyMilestone)}>
+            <input
+              type="checkbox"
+              id="etm-key-milestone"
+              checked={draft.keyMilestone}
+              onChange={e => set("keyMilestone", e.target.checked)}
+              onClick={e => e.stopPropagation()}
+              style={{ marginTop: 2, width: 15, height: 15, cursor: "pointer", accentColor: C.red, flexShrink: 0 }}
+            />
+            <div>
+              <label htmlFor="etm-key-milestone" style={{ fontSize: 12, color: draft.keyMilestone ? C.red : C.text, fontWeight: 600, cursor: "pointer", display: "block" }}>
+                ◆ Key Milestone
+              </label>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>A dotted red vertical line will mark the end of this task across the Gantt chart.</div>
+            </div>
           </div>
         </div>
 
