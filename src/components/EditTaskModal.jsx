@@ -141,7 +141,7 @@ export default function EditTaskModal({ task, fixedStartDate, resources, rawTask
           </div>
 
           <div>
-            <label style={labelStyle}>FIXED START DATE <span style={{ fontSize: 9, color: C.muted, letterSpacing: 0, textTransform: "none" }}>(optional — task will not start before this date)</span></label>
+            <label style={labelStyle}>FIXED START DATE <span style={{ fontSize: 9, color: C.muted, letterSpacing: 0, textTransform: "none" }}>(MM-DD-YYYY optional — task will not start before this date)</span></label>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 type="date"
