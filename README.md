@@ -17,6 +17,8 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Week and month zoom levels
 - Filter tasks by category
 - Test tasks are highlighted with a distinct color and TEST badge
+- **Fixed Start Date** — optional per-task constraint; the task will not start before the given date (set via Edit Task modal or imported from a `Fixed Start Date` column). Shown as a yellow left-edge stripe and a **FIX** badge on the bar
+- **Key Milestones** — flag any task as a key milestone via the ⭐ button on the task row or via the Edit Task modal. A dotted red vertical line crosses the entire chart at the task's end date, and a vertical label row above the bars shows each milestone's name. Hover the label for a tooltip with the full name
 - **Delete task** — click the `×` button on any row to remove a single task (confirmation required)
 - **Delete all unassigned** — toolbar button removes every task with no assignee at once (visible only when unassigned tasks exist, confirmation required)
 
@@ -103,6 +105,8 @@ The app accepts `.xlsx` and `.csv` files. Drag and drop onto the import screen o
 | `Days` | Estimated working days |
 | `Assignee` | Team member name — pre-populates assignments on import |
 | `Integration Effort` | `Yes` / `No` — informational, not used in scheduling |
+| `Fixed Start Date` | Optional. `YYYY-MM-DD` — task will not start before this date regardless of dependencies |
+| `Key Milestone` | Optional. `true` / `yes` / `1` — marks the task as a key milestone |
 
 > **Note:** The `Serial Number` column supports Excel `=ROW()-1` style formulas — they are evaluated automatically on import.
 
@@ -138,7 +142,7 @@ If the `Days` column is empty, the app falls back to the `Complexity` column usi
 | Sheet | Contents |
 |---|---|
 | `Schedule` | All tasks with computed start/end dates, assignees, progress % |
-| `Session` | Project start, theme, resources, holidays, vacation days, assignments, progress, task statuses |
+| `Session` | Project start, theme, resources, holidays, vacation days, assignments, progress, task statuses, fixed start dates, milestones |
 | `Workload` | Per-person summary: tasks, total days, finish date |
 
 **Restoring:** Drop the session file onto the import screen. The app automatically detects the Session sheet and restores your full state.
