@@ -2,6 +2,7 @@ import { useState, useMemo, useRef } from "react";
 import ExcelJS from "exceljs";
 import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize } from "./utils/scheduleUtils";
 import AddTaskModal from "./components/AddTaskModal";
+import EditTaskModal from "./components/EditTaskModal";
 import ConfirmDialog from "./components/ConfirmDialog";
 import { applyDeleteTask, applyDeleteAllUnassigned, applyUnassignAllForPerson } from "./utils/taskMutations";
 
@@ -168,7 +169,7 @@ function parseFile(file, callback) {
       const sessRaw = wsToAoa(wb.getWorksheet("Session"));
       const tasks = normalizeTasks(schedRows);
 
-      const session = { projectStart: null, themeKey: null, resources: [], holidays: [], vacMap: {}, assignments: {}, progress: {}, statuses: {} };
+      const session = { projectStart: null, themeKey: null, resources: [], holidays: [], vacMap: {}, assignments: {}, progress: {}, statuses: {}, fixedStartDates: {} };
       let mode = null;
       for (const row of sessRaw) {
         const cell0 = String(row[0] ?? "").trim();
@@ -182,6 +183,7 @@ function parseFile(file, callback) {
         if (cell0 === "ASSIGNMENTS") { mode = "assignments"; continue; }
         if (cell0 === "PROGRESS") { mode = "progress"; continue; }
         if (cell0 === "STATUSES") { mode = "statuses"; continue; }
+        if (cell0 === "FIXED START DATES") { mode = "fixedStartDates"; continue; }
         if (!cell0 && !cell1 && !cell2) { mode = null; continue; }
         if (mode === "resources" && cell0) session.resources.push(cell0);
         if (mode === "holidays" && cell0) session.holidays.push(cell0);
@@ -192,6 +194,7 @@ function parseFile(file, callback) {
         if (mode === "assignments" && cell1) session.assignments[cell1] = cell2;
         if (mode === "progress" && cell1) session.progress[cell1] = Number(cell2);
         if (mode === "statuses" && cell1) session.statuses[cell1] = cell2;
+        if (mode === "fixedStartDates" && cell1) session.fixedStartDates[cell1] = cell2;
       }
 
       schedRows.forEach((r) => {
@@ -224,6 +227,10 @@ function normalizeTasks(rows) {
 
     const days = parseInt(row["Days"]) || SIZE_DAYS[String(row["Complexity"]).trim()] || 1;
 
+    // Fixed Start Date column (optional): normalize to YYYY-MM-DD or empty string
+    const fsdRaw = row["Fixed Start Date"] ?? row["fixed start date"] ?? row["Fixed start date"] ?? "";
+    const fixedStartDate = String(fsdRaw).trim();
+
     return {
       ...row,
       "Serial Number": serial,
@@ -231,6 +238,7 @@ function normalizeTasks(rows) {
       "Days": days,
       "Assignee": row["Assignee"] || "",
       "Status": row["Status"] || "Open",
+      "Fixed Start Date": fixedStartDate,
     };
   });
 }
@@ -278,6 +286,9 @@ export default function GanttApp() {
   const [sessionFileHandle, setSessionFileHandle] = useState(null); // FileSystemFileHandle | null
   const [sessionFileName, setSessionFileName] = useState("gantt_session.xlsx");
   const [saveStatus, setSaveStatus] = useState(null); // null | 'saving' | 'saved'
+  const [fixedStartDates, setFixedStartDates] = useState({}); // { [sn]: "YYYY-MM-DD" }
+  const [editTaskModal, setEditTaskModal] = useState(null); // null | sn
+  const [ganttContextMenu, setGanttContextMenu] = useState(null); // null | { sn, x, y }
 
   function askConfirm(message, onConfirm, confirmLabel = "Delete") {
     setConfirmDialog({ message, onConfirm, confirmLabel });
@@ -299,6 +310,7 @@ export default function GanttApp() {
   function deleteTask(sn) {
     const r = applyDeleteTask(sn, rawTasks, assignments, progress, taskStatuses);
     setRawTasks(r.rawTasks); setAssignments(r.assignments); setProgress(r.progress); setTaskStatuses(r.taskStatuses);
+    setFixedStartDates(prev => { const n = { ...prev }; delete n[sn]; return n; });
   }
 
   function unassignAllForPerson(person) {
@@ -308,6 +320,43 @@ export default function GanttApp() {
   function deleteAllUnassigned() {
     const r = applyDeleteAllUnassigned(rawTasks, assignments, progress, taskStatuses);
     setRawTasks(r.rawTasks); setProgress(r.progress); setTaskStatuses(r.taskStatuses);
+    const remainingSNs = new Set(r.rawTasks.map(t => t["Serial Number"]));
+    setFixedStartDates(prev => Object.fromEntries(Object.entries(prev).filter(([sn]) => remainingSNs.has(sn))));
+  }
+
+  function submitEditTask(sn, draft) {
+    setRawTasks(prev => prev.map(t =>
+      t["Serial Number"] !== sn ? t : {
+        ...t,
+        "Description": draft.description,
+        "Category": draft.category,
+        "Days": parseInt(draft.days) || 1,
+        "Complexity": draft.complexity,
+        "Depends On": draft.dependsOn,
+        "Status": draft.status,
+        "Integration Effort": draft.integrationEffort,
+      }
+    ));
+    setAssignments(prev => {
+      const n = { ...prev };
+      if (draft.assignee) n[sn] = draft.assignee;
+      else delete n[sn];
+      return n;
+    });
+    setTaskStatus(sn, draft.status);
+    setFixedStartDates(prev => {
+      const n = { ...prev };
+      if (draft.fixedStartDate) n[sn] = draft.fixedStartDate;
+      else delete n[sn];
+      return n;
+    });
+    setEditTaskModal(null);
+  }
+
+  function openEditModal(sn) {
+    setContextMenu(null);
+    setGanttContextMenu(null);
+    setEditTaskModal(sn);
   }
 
   function submitNewTask(draft) {
@@ -348,6 +397,9 @@ export default function GanttApp() {
     });
     setTaskStatuses(s);
     setProgress(p);
+    const importedFSD = {};
+    tasks.forEach((t) => { if (t["Fixed Start Date"]) importedFSD[t["Serial Number"]] = t["Fixed Start Date"]; });
+    setFixedStartDates(importedFSD);
     const people = [...new Set(tasks.map((t) => t["Assignee"]).filter(Boolean))];
     setResources((prev) => [...new Set([...prev, ...people])]);
     setScreen("gantt");
@@ -385,6 +437,7 @@ export default function GanttApp() {
         }
         setHolidays(session.holidays);
         setVacMap(session.vacMap);
+        setFixedStartDates(session.fixedStartDates || {});
         setScreen("gantt");
       } else {
         loadTasks(tasks);
@@ -414,8 +467,8 @@ export default function GanttApp() {
   }, [filteredRaw]);
 
   const scheduledTasks = useMemo(() =>
-    scheduleTasks(filteredRaw, assignments, holidays, vacMap, projectStart),
-    [filteredRaw, assignments, holidays, vacMap, projectStart]);
+    scheduleTasks(filteredRaw, assignments, holidays, vacMap, projectStart, fixedStartDates),
+    [filteredRaw, assignments, holidays, vacMap, projectStart, fixedStartDates]);
 
   const projectEnd = useMemo(() =>
     scheduledTasks.reduce((mx, t) => (t._end > mx ? t._end : mx), projectStart),
@@ -534,7 +587,7 @@ export default function GanttApp() {
 
   function optimizeAndRedistributeTasks() {
     setUndoHistory(h => [...h, { assignments: { ...assignments } }]);
-    const next = levelOptimize(filteredRaw, resources, assignments, progress, holidays, vacMap, projectStart);
+    const next = levelOptimize(filteredRaw, resources, assignments, progress, holidays, vacMap, projectStart, fixedStartDates);
     setAssignments(next);
   }
 
@@ -562,16 +615,17 @@ export default function GanttApp() {
 
   async function buildSessionBlob() {
     const wb = new ExcelJS.Workbook();
-    const scheduleHeaders = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Integration Effort"];
+    const scheduleHeaders = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Integration Effort", "Fixed Start Date"];
     const scheduleRows = scheduledTasks.map((t) => [
       t["Serial Number"], t["Category"], t["Description"], t["Depends On"],
       getStatus(t["Serial Number"]), t["Complexity"], t["Days"], t._start, t._end,
       assignments[t["Serial Number"]] || "", progress[t["Serial Number"]] ?? 0, t["Integration Effort"],
+      fixedStartDates[t["Serial Number"]] || "",
     ]);
     const schedWS = wb.addWorksheet("Schedule");
     schedWS.addRow(scheduleHeaders);
     scheduleRows.forEach((r) => schedWS.addRow(r));
-    [14, 22, 50, 14, 14, 12, 8, 12, 12, 16, 12, 18].forEach((w, i) => { schedWS.getColumn(i + 1).width = w; });
+    [14, 22, 50, 14, 14, 12, 8, 12, 12, 16, 12, 18, 14].forEach((w, i) => { schedWS.getColumn(i + 1).width = w; });
 
     const sessionRows = [
       ["GANTT SESSION DATA — import this file to restore your work"], [],
@@ -586,6 +640,9 @@ export default function GanttApp() {
       ...Object.entries(progress).map(([sn, pct]) => ["", sn, pct]), [],
       ["STATUSES", "Serial Number", "Status"],
       ...Object.entries(taskStatuses).map(([sn, st]) => ["", sn, st]),
+      [],
+      ["FIXED START DATES", "Serial Number", "Date"],
+      ...Object.entries(fixedStartDates).map(([sn, d]) => ["", sn, d]),
     ];
     const sessWS = wb.addWorksheet("Session");
     sessionRows.forEach((r) => sessWS.addRow(r));
@@ -800,7 +857,7 @@ export default function GanttApp() {
 
       {/* ── GANTT TAB ── */}
       {tab === "gantt" && (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }} onClick={() => setGanttContextMenu(null)}>
           {/* Category filter */}
           <div style={{ display: "flex", gap: 6, padding: "8px 16px", borderBottom: `1px solid ${C.border}`, overflowX: "auto", flexShrink: 0, background: C.surface + "88" }}>
             {categories.map((cat) => (
@@ -831,11 +888,13 @@ export default function GanttApp() {
                   const completed = isTaskCompleted(sn);
                   const isUnassigned = !assignments[sn];
                   return (
-                    <div key={sn} style={{
-                      height: rowH, display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
-                      borderBottom: `1px solid ${C.border}18`,
-                      background: completed ? C.green + "0d" : isUnassigned ? UNASSIGNED_COLOR[themeKey] + "14" : i % 2 === 0 ? "transparent" : C.surface + "55",
-                    }}>
+                    <div key={sn}
+                      onContextMenu={(e) => { e.preventDefault(); setGanttContextMenu({ sn, x: e.clientX, y: e.clientY }); }}
+                      style={{
+                        height: rowH, display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
+                        borderBottom: `1px solid ${C.border}18`,
+                        background: completed ? C.green + "0d" : isUnassigned ? UNASSIGNED_COLOR[themeKey] + "14" : i % 2 === 0 ? "transparent" : C.surface + "55",
+                      }}>
                       <span style={{ width: 26, fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{sn}</span>
                       <div style={{ flex: 1, overflow: "hidden" }}>
                         <div style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: completed ? C.muted : C.text }} title={task["Description"]}>{task["Description"]}</div>
@@ -920,13 +979,16 @@ export default function GanttApp() {
                         height: rowH, position: "relative",
                         background: i % 2 === 0 ? "transparent" : C.surface + "44",
                       }}>
-                        <div style={{
-                          position: "absolute", left: x, top: 8, width: w, height: rowH - 16,
-                          background: col + "30",
-                          borderWidth: 1, borderStyle: isUnassigned && !isTest ? "dashed" : "solid",
-                          borderColor: col + "88", borderRadius: 4,
-                          overflow: "hidden",
-                        }}>
+                        <div
+                          title={fixedStartDates[sn] ? `Fixed start: ${fixedStartDates[sn]}` : undefined}
+                          style={{
+                            position: "absolute", left: x, top: 8, width: w, height: rowH - 16,
+                            background: col + "30",
+                            borderWidth: 1, borderStyle: isUnassigned && !isTest ? "dashed" : "solid",
+                            borderColor: col + "88", borderRadius: 4,
+                            overflow: "hidden",
+                            boxShadow: fixedStartDates[sn] ? `inset 3px 0 0 ${C.yellow}` : undefined,
+                          }}>
                           <div style={{ width: `${pct}%`, height: "100%", background: col + "44" }} />
                           {w > 44 && (
                             <div style={{
@@ -939,6 +1001,9 @@ export default function GanttApp() {
                               )}
                               {isUnassigned && !isTest && (
                                 <span style={{ background: col, color: "#fff", borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0 }}>UNSET</span>
+                              )}
+                              {fixedStartDates[sn] && (
+                                <span style={{ background: C.yellow + "33", color: C.yellow, borderRadius: 3, padding: "1px 4px", fontSize: 8, fontWeight: 700, flexShrink: 0, border: `1px solid ${C.yellow}66` }}>FIX</span>
                               )}
                               {pct > 0 ? `${pct}% · ` : ""}{task["Description"]?.slice(0, 22)}
                             </div>
@@ -976,6 +1041,37 @@ export default function GanttApp() {
               </div>
             </div>
           </div>
+
+          {/* Gantt context menu */}
+          {ganttContextMenu && (
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                position: "fixed", left: ganttContextMenu.x, top: ganttContextMenu.y, zIndex: 1000,
+                background: C.card, border: `1px solid ${C.border}`,
+                borderRadius: 10, overflow: "hidden",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.35)",
+                minWidth: 160,
+              }}
+            >
+              <div style={{ padding: "4px 0" }}>
+                <div
+                  onClick={() => openEditModal(ganttContextMenu.sn)}
+                  style={{ padding: "8px 14px", cursor: "pointer", color: C.text, fontSize: 12, transition: "background 0.1s" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = C.surface; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                >Edit task…</div>
+              </div>
+              <div style={{ borderTop: `1px solid ${C.border}`, padding: "4px 0" }}>
+                <div
+                  onClick={() => { const sn = ganttContextMenu.sn; setGanttContextMenu(null); askConfirm(`Delete task ${sn}?`, () => deleteTask(sn)); }}
+                  style={{ padding: "8px 14px", cursor: "pointer", color: C.red, fontSize: 12, fontWeight: 600, transition: "background 0.1s" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = C.red + "18"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                >Delete task</div>
+              </div>
+            </div>
+          )}
 
           {/* Progress sliders */}
           <div style={{ borderTop: `1px solid ${C.border}`, padding: "10px 20px", display: "flex", gap: 14, overflowX: "auto", background: C.surface, flexShrink: 0, alignItems: "center" }}>
@@ -1126,6 +1222,9 @@ export default function GanttApp() {
                           <span style={{ fontSize: 9, color: taskColor, whiteSpace: "nowrap", flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>
                             {t["Days"]}d
                           </span>
+                          {fixedStartDates[sn] && (
+                            <span title={`Fixed start: ${fixedStartDates[sn]}`} style={{ fontSize: 8, color: C.yellow, fontFamily: "'DM Mono', monospace", flexShrink: 0, background: C.yellow + "22", borderRadius: 3, padding: "1px 4px", border: `1px solid ${C.yellow}55` }}>FIX</span>
+                          )}
                           {!completed && <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>}
                         </div>
                       );
@@ -1254,6 +1353,15 @@ export default function GanttApp() {
                 <div style={{ fontSize: 12, color: C.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
                   {rawTasks.find((t) => t["Serial Number"] === contextMenu.sn)?.["Description"] || `Task ${contextMenu.sn}`}
                 </div>
+              </div>
+              {/* Edit action */}
+              <div style={{ padding: "4px 0", borderBottom: `1px solid ${C.border}` }}>
+                <div
+                  onClick={() => openEditModal(contextMenu.sn)}
+                  style={{ padding: "8px 14px", cursor: "pointer", color: C.text, fontSize: 12, transition: "background 0.1s" }}
+                  onMouseEnter={e => { e.currentTarget.style.background = C.surface; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                >Edit task…</div>
               </div>
               {/* Status options */}
               <div style={{ padding: "4px 0", borderBottom: `1px solid ${C.border}` }}>
@@ -1428,6 +1536,24 @@ export default function GanttApp() {
           onClose={() => setAddTaskModal(null)}
         />
       )}
+
+      {editTaskModal && (() => {
+        const task = rawTasks.find(t => t["Serial Number"] === editTaskModal);
+        if (!task) return null;
+        const taskWithCurrentAssignee = { ...task, "Assignee": assignments[editTaskModal] || "", "Status": getStatus(editTaskModal) };
+        return (
+          <EditTaskModal
+            task={taskWithCurrentAssignee}
+            fixedStartDate={fixedStartDates[editTaskModal] || ""}
+            resources={resources}
+            rawTasks={rawTasks}
+            categories={categories}
+            C={C}
+            onSubmit={submitEditTask}
+            onClose={() => setEditTaskModal(null)}
+          />
+        );
+      })()}
 
       {confirmDialog && (
         <ConfirmDialog

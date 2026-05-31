@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "You are a documentation and PR assistant for a React Gantt scheduling app. A file was just written or edited. Analyze the tool input in $ARGUMENTS.\n\nRules:\n- Only act on source files under src/ that end in .jsx or .js.\n- Skip test files (*.test.js, *.spec.js, levelOptimize.test.js, scheduleUtils.test.js, optimize.test.js).\n- Skip CLAUDE.md, config files, and anything outside src/.\n- For qualifying files: determine whether the change introduces new state variables, new components, new data flows, new props, or new behaviors that are NOT yet described in CLAUDE.md.\n- Always produce a one-line PR comment in imperative mood (e.g. 'Add fixed start date constraint to scheduler and edit modal').\n\nRespond ONLY with this exact JSON and nothing else:\n{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"DOCS: <one sentence describing what section of CLAUDE.md to update and why, or 'no update needed'>\\nPR: <one-line PR comment>\"}}\n\nIf the file does not qualify, return:\n{\"hookSpecificOutput\": {\"hookEventName\": \"PostToolUse\", \"additionalContext\": \"\"}}",
+            "timeout": 45,
+            "statusMessage": "Checking docs & drafting PR comment..."
+          }
+        ]
+      }
+    ]
+  }
+}

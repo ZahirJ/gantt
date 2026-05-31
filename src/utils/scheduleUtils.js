@@ -34,7 +34,7 @@ export function addWorkdays(date, extraDays, holidays, vacMap, person) {
   return d;
 }
 
-export function scheduleTasks(rawTasks, assignments, holidays, vacMap, projectStart) {
+export function scheduleTasks(rawTasks, assignments, holidays, vacMap, projectStart, fixedStartDates = {}) {
   // Bail out silently if the date is still being typed (partial / invalid value)
   if (!projectStart || isNaN(new Date(projectStart).getTime())) return rawTasks.map((t) => ({ ...t, _start: null, _end: null }));
   const tasks = rawTasks.map((t) => ({ ...t, _start: null, _end: null }));
@@ -71,6 +71,12 @@ export function scheduleTasks(rawTasks, assignments, holidays, vacMap, projectSt
       }
 
       let start = new Date(Math.max(earliest.getTime(), personFree.getTime()));
+      // Fixed start date acts as a floor: task cannot begin before this date
+      const fixed = fixedStartDates[sn];
+      if (fixed) {
+        const fixedDate = new Date(fixed);
+        if (fixedDate > start) start = fixedDate;
+      }
       start = nextWorkday(start, holidays, vacMap, person);
 
       const days = parseInt(task["Days"]) || 1;
@@ -97,7 +103,7 @@ export function scheduleTasks(rawTasks, assignments, holidays, vacMap, projectSt
  * @param {string}   projectStart - ISO date string
  * @returns {object} new assignments map
  */
-export function levelOptimize(tasks, resources, assignments, progress, holidays, vacMap, projectStart) {
+export function levelOptimize(tasks, resources, assignments, progress, holidays, vacMap, projectStart, fixedStartDates = {}) {
   const isTest = (t) => /^add tests?\b/i.test(String(t["Description"] || "").trim());
   const snStr = (t) => String(t["Serial Number"]);
   const snMap = new Map(tasks.map(t => [snStr(t), t]));
@@ -184,7 +190,7 @@ export function levelOptimize(tasks, resources, assignments, progress, holidays,
   });
 
   const getEndDates = (assign) => {
-    const scheduled = scheduleTasks(tasks, assign, holidays, vacMap, projectStart);
+    const scheduled = scheduleTasks(tasks, assign, holidays, vacMap, projectStart, fixedStartDates);
     return Object.fromEntries(resources.map(r => {
       const rTasks = scheduled.filter(t => assign[snStr(t)] === r && t._end);
       return [r, rTasks.length > 0 ? rTasks.reduce((mx, t) => t._end > mx ? t._end : mx, "") : projectStart];
