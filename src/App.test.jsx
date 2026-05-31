@@ -15,7 +15,7 @@ describe('App Component', () => {
 
     test('renders import screen by default', () => {
       render(<App />);
-      expect(screen.getByText(/upload your excel or csv workplan/i)).toBeInTheDocument();
+      expect(screen.getByText(/start from scratch or import/i)).toBeInTheDocument();
     });
 
     test('shows project scheduler subtitle', () => {
@@ -26,7 +26,6 @@ describe('App Component', () => {
     test('displays file input area with drop hint', () => {
       render(<App />);
       expect(screen.getByText(/drop your .xlsx or .csv file here/i)).toBeInTheDocument();
-      expect(screen.getByText(/or click to browse/i)).toBeInTheDocument();
     });
 
     test('shows expected task column descriptions', () => {
@@ -63,14 +62,12 @@ describe('App Component', () => {
   describe('Information Display', () => {
     test('explains session XLSX purpose', () => {
       render(<App />);
-      expect(screen.getByText(/session xlsx/i)).toBeInTheDocument();
-      expect(screen.getByText(/restores your full work/i)).toBeInTheDocument();
+      expect(screen.getByText(/session xlsx restores full state/i)).toBeInTheDocument();
     });
 
     test('explains task XLSX/CSV purpose', () => {
       render(<App />);
-      expect(screen.getByText(/task xlsx \/ csv/i)).toBeInTheDocument();
-      expect(screen.getByText(/imports a fresh task list/i)).toBeInTheDocument();
+      expect(screen.getByText(/task xlsx\/csv imports a fresh list/i)).toBeInTheDocument();
     });
 
     test('lists expected task columns in help section', () => {
@@ -121,8 +118,8 @@ describe('App Component', () => {
       // Drop zone
       expect(screen.getByText(/drop your .xlsx or .csv file here/i)).toBeInTheDocument();
 
-      // Info box
-      expect(screen.getByText(/drop a task file or a saved session/i)).toBeInTheDocument();
+      // New project section
+      expect(screen.getByText(/new project/i)).toBeInTheDocument();
     });
 
     test('file drop zone has icon emoji', () => {
@@ -170,14 +167,13 @@ describe('App Component', () => {
   describe('Content Structure', () => {
     test('help section mentions project scheduler concept', () => {
       render(<App />);
-      const helpText = screen.getByText(/drop a task file or a saved session/i);
-      expect(helpText).toBeInTheDocument();
+      expect(screen.getByText(/new project/i)).toBeInTheDocument();
+      expect(screen.getByText(/import existing/i)).toBeInTheDocument();
     });
 
     test('displays both session and task import modes', () => {
       render(<App />);
-      expect(screen.getByText(/session xlsx/i)).toBeInTheDocument();
-      expect(screen.getByText(/task xlsx \/ csv/i)).toBeInTheDocument();
+      expect(screen.getByText(/session xlsx restores full state/i)).toBeInTheDocument();
     });
   });
 
@@ -233,16 +229,12 @@ describe('App Component', () => {
   describe('Text Content', () => {
     test('upload prompt is clearly visible', () => {
       render(<App />);
-      expect(screen.getByText(/upload your excel or csv workplan/i)).toBeInTheDocument();
+      expect(screen.getByText(/start from scratch or import/i)).toBeInTheDocument();
     });
 
     test('provides helpful context for different file types', () => {
       render(<App />);
-      const sessionText = screen.getByText(/session xlsx/i);
-      const taskText = screen.getByText(/task xlsx \/ csv/i);
-
-      expect(sessionText).toBeInTheDocument();
-      expect(taskText).toBeInTheDocument();
+      expect(screen.getByText(/session xlsx restores full state/i)).toBeInTheDocument();
     });
   });
 

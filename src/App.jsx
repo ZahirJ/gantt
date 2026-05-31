@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import ExcelJS from "exceljs";
 import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize } from "./utils/scheduleUtils";
 import AddTaskModal from "./components/AddTaskModal";
@@ -69,6 +69,30 @@ function statusColor(s = "", theme = "dark") {
 }
 
 const SIZE_DAYS = { S: 1, M: 3, L: 5, XL: 10 };
+
+function NamePromptModal({ C, onConfirm, onSkip }) {
+  const [draft, setDraft] = useState("");
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 14, padding: 28, width: 380, boxShadow: "0 16px 48px rgba(0,0,0,0.4)" }}>
+        <div style={{ fontWeight: 600, fontSize: 15, color: C.text, marginBottom: 6 }}>Name your project</div>
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 20 }}>Used in the filename and top bar. You can change it anytime in Settings or the top bar.</div>
+        <input
+          autoFocus
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && draft.trim()) onConfirm(draft.trim()); if (e.key === "Escape") onSkip(); }}
+          placeholder="e.g. Q3 Platform Migration"
+          style={{ width: "100%", boxSizing: "border-box", background: C.inputBg, border: `1px solid ${C.border}`, color: C.text, borderRadius: 8, padding: "10px 12px", fontSize: 13, marginBottom: 16, outline: "none" }}
+        />
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onSkip} style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 8, padding: "7px 16px", cursor: "pointer", fontSize: 12 }}>Skip</button>
+          <button onClick={() => onConfirm(draft.trim())} style={{ background: C.accent, border: "none", color: "#fff", borderRadius: 8, padding: "7px 16px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>Save</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function isTestTask(desc = "") {
   return /\btest(ing)?\b/i.test(String(desc).trim());
@@ -169,12 +193,13 @@ function parseFile(file, callback) {
       const sessRaw = wsToAoa(wb.getWorksheet("Session"));
       const tasks = normalizeTasks(schedRows);
 
-      const session = { projectStart: null, themeKey: null, resources: [], holidays: [], vacMap: {}, assignments: {}, progress: {}, statuses: {}, fixedStartDates: {} };
+      const session = { projectName: "", projectStart: null, themeKey: null, resources: [], holidays: [], vacMap: {}, assignments: {}, progress: {}, statuses: {}, fixedStartDates: {} };
       let mode = null;
       for (const row of sessRaw) {
         const cell0 = String(row[0] ?? "").trim();
         const cell1 = String(row[1] ?? "").trim();
         const cell2 = String(row[2] ?? "").trim();
+        if (cell0 === "PROJECT NAME") { session.projectName = cell1; continue; }
         if (cell0 === "PROJECT START") { session.projectStart = cell1; continue; }
         if (cell0 === "THEME") { session.themeKey = cell1; continue; }
         if (cell0 === "RESOURCES") { mode = "resources"; continue; }
@@ -290,6 +315,18 @@ export default function GanttApp() {
   const [editTaskModal, setEditTaskModal] = useState(null); // null | sn
   const [ganttContextMenu, setGanttContextMenu] = useState(null); // null | { sn, x, y }
   const [barTooltip, setBarTooltip] = useState(null); // null | { text, x, y }
+  const [isDirty, setIsDirty] = useState(false);
+  const [projectName, setProjectName] = useState(""); // display name shown in top bar & used for filename
+  const [namePrompt, setNamePrompt] = useState(null); // null | { onSave: (name) => void }
+  const [newProjectName, setNewProjectName] = useState(""); // controlled input for named new project
+  const skipDirtyRef = useRef(true); // true during load/new-project batch to suppress dirty flag
+
+  // Mark dirty whenever project data changes, but not during load/new-project batches
+  useEffect(() => {
+    if (skipDirtyRef.current) { skipDirtyRef.current = false; return; }
+    if (screen === "gantt") setIsDirty(true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawTasks, assignments, progress, taskStatuses, fixedStartDates, resources, holidays, vacMap, projectStart]);
 
   function askConfirm(message, onConfirm, confirmLabel = "Delete") {
     setConfirmDialog({ message, onConfirm, confirmLabel });
@@ -380,6 +417,9 @@ export default function GanttApp() {
   }
 
   function loadTasks(allTasks) {
+    skipDirtyRef.current = true;
+    setIsDirty(false);
+    setProjectName("");
     const tasks = allTasks.filter(t => (t["Status"] || "").toLowerCase() !== "completed");
     setRawTasks(tasks);
     const a = {};
@@ -410,6 +450,8 @@ export default function GanttApp() {
     if (!file) return;
     parseFile(file, (err, tasks, session) => {
       if (err) { alert("Error reading file: " + err.message); return; }
+      skipDirtyRef.current = true;
+      setIsDirty(false);
       if (session) {
         if (fileHandle) setSessionFileHandle(fileHandle);
         setSessionFileName(file.name);
@@ -439,11 +481,45 @@ export default function GanttApp() {
         setHolidays(session.holidays);
         setVacMap(session.vacMap);
         setFixedStartDates(session.fixedStartDates || {});
+        setProjectName(session.projectName || "");
         setScreen("gantt");
       } else {
         loadTasks(tasks);
       }
     });
+  }
+
+  const SAMPLE_TASKS = [
+    { "Serial Number": "1", "Description": "Define requirements", "Category": "Planning", "Days": 3, "Complexity": "M", "Depends On": "", "Status": "Open", "Assignee": "", "Integration Effort": "", "Fixed Start Date": "" },
+    { "Serial Number": "2", "Description": "Build core feature", "Category": "Development", "Days": 5, "Complexity": "L", "Depends On": "1", "Status": "Open", "Assignee": "", "Integration Effort": "", "Fixed Start Date": "" },
+    { "Serial Number": "3", "Description": "Add tests for core feature", "Category": "QA", "Days": 3, "Complexity": "M", "Depends On": "2", "Status": "Open", "Assignee": "", "Integration Effort": "", "Fixed Start Date": "" },
+  ];
+
+  function createNewProject(mode, name = "") {
+    skipDirtyRef.current = true;
+    setIsDirty(false);
+    setRawTasks(mode === "sample" ? SAMPLE_TASKS : []);
+    setAssignments({});
+    setResources([]);
+    setProgress({});
+    setTaskStatuses({});
+    setFixedStartDates({});
+    setHolidays([]);
+    setVacMap({});
+    setProjectStart(fmtDate(new Date()));
+    setProjectName(name || "");
+    setSessionFileHandle(null);
+    setSessionFileName(name ? `${name} gantt.xlsx` : "gantt_session.xlsx");
+    setScreen("gantt");
+  }
+
+  // Navigate away with unsaved-changes guard
+  function safeNavigateToImport() {
+    if (isDirty) {
+      askConfirm("You have unsaved changes. Discard and continue?", () => setScreen("import"), "Discard");
+    } else {
+      setScreen("import");
+    }
   }
 
   const categories = useMemo(() => {
@@ -630,6 +706,7 @@ export default function GanttApp() {
 
     const sessionRows = [
       ["GANTT SESSION DATA — import this file to restore your work"], [],
+      ...(projectName ? [["PROJECT NAME", projectName]] : []),
       ["PROJECT START", projectStart], ["THEME", themeKey], [],
       ["RESOURCES"], ...resources.map((r) => [r]), [],
       ["PUBLIC HOLIDAYS"], ...holidays.map((h) => [h]), [],
@@ -665,7 +742,18 @@ export default function GanttApp() {
     await writable.close();
   }
 
-  async function quickSave() {
+  function suggestedFileName() {
+    const base = projectName.trim();
+    return base ? `${base} gantt.xlsx` : sessionFileName;
+  }
+
+  async function quickSave(skipNamePrompt = false) {
+    // If no project name yet, no existing file handle, and no OS picker available,
+    // ask for a name so the download filename is meaningful
+    if (!skipNamePrompt && !projectName.trim() && !sessionFileHandle && !window.showSaveFilePicker) {
+      setNamePrompt({ afterName: (_name) => quickSave(true) });
+      return;
+    }
     setSaveStatus("saving");
     try {
       const blob = await buildSessionBlob();
@@ -677,7 +765,7 @@ export default function GanttApp() {
             (await sessionFileHandle.requestPermission({ mode: "readwrite" })) === "granted";
           if (granted) {
             await writeToHandle(sessionFileHandle, blob);
-            setSaveStatus("saved");
+            setSaveStatus("saved"); setIsDirty(false);
             setTimeout(() => setSaveStatus(null), 2000);
             return;
           }
@@ -688,13 +776,13 @@ export default function GanttApp() {
       if (window.showSaveFilePicker) {
         try {
           const handle = await window.showSaveFilePicker({
-            suggestedName: sessionFileName,
+            suggestedName: suggestedFileName(),
             types: [{ description: "Excel Workbook", accept: { "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"] } }],
           });
           setSessionFileHandle(handle);
           setSessionFileName(handle.name);
           await writeToHandle(handle, blob);
-          setSaveStatus("saved");
+          setSaveStatus("saved"); setIsDirty(false);
           setTimeout(() => setSaveStatus(null), 2000);
         } catch (e) {
           if (e.name !== "AbortError") throw e;
@@ -707,7 +795,7 @@ export default function GanttApp() {
         a.download = sessionFileName;
         a.click();
         URL.revokeObjectURL(a.href);
-        setSaveStatus("saved");
+        setSaveStatus("saved"); setIsDirty(false);
         setTimeout(() => setSaveStatus(null), 2000);
       }
     } catch {
@@ -751,8 +839,55 @@ export default function GanttApp() {
           </div>
           <div style={{ fontSize: 10, letterSpacing: 5, color: C.muted, marginBottom: 18, fontFamily: "'DM Mono', monospace", textTransform: "uppercase" }}>Project Scheduler</div>
           <h1 style={{ fontSize: 46, fontWeight: 300, margin: "0 0 8px", letterSpacing: -2 }}>Team Gantt</h1>
-          <p style={{ color: C.muted, marginBottom: 48, fontSize: 14 }}>Upload your Excel or CSV workplan</p>
+          <p style={{ color: C.muted, marginBottom: 36, fontSize: 14 }}>Start from scratch or import an existing workplan</p>
 
+          {/* ── New Project ── */}
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 10, letterSpacing: 3, color: C.muted, marginBottom: 12, fontFamily: "'DM Mono', monospace", textTransform: "uppercase" }}>New Project</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+              {/* Blank */}
+              <button
+                onClick={() => createNewProject("blank")}
+                style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "18px 12px", cursor: "pointer", color: C.text, textAlign: "center", transition: "border-color 0.15s" }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = C.accent}
+                onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
+              >
+                <div style={{ fontSize: 24, marginBottom: 8 }}>✦</div>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Blank</div>
+                <div style={{ fontSize: 11, color: C.muted }}>Empty canvas, add tasks manually</div>
+              </button>
+              {/* Named */}
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "18px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🏷️</div>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Named</div>
+                <input
+                  value={newProjectName}
+                  onChange={e => setNewProjectName(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && newProjectName.trim() && createNewProject("blank", newProjectName.trim())}
+                  placeholder="Project name…"
+                  style={{ width: "100%", boxSizing: "border-box", background: C.inputBg, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: "6px 8px", fontSize: 11, marginBottom: 8, outline: "none" }}
+                />
+                <button
+                  onClick={() => newProjectName.trim() && createNewProject("blank", newProjectName.trim())}
+                  style={{ background: newProjectName.trim() ? C.accent : C.border, border: "none", color: newProjectName.trim() ? "#fff" : C.muted, borderRadius: 6, padding: "6px 14px", cursor: newProjectName.trim() ? "pointer" : "default", fontSize: 11, fontWeight: 600, width: "100%" }}
+                >Create</button>
+              </div>
+              {/* Sample */}
+              <button
+                onClick={() => createNewProject("sample")}
+                style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 10, padding: "18px 12px", cursor: "pointer", color: C.text, textAlign: "center", transition: "border-color 0.15s" }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = C.accent}
+                onMouseLeave={e => e.currentTarget.style.borderColor = C.border}
+              >
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🗂️</div>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>With sample tasks</div>
+                <div style={{ fontSize: 11, color: C.muted }}>3 example tasks to get started</div>
+              </button>
+            </div>
+          </div>
+
+          {/* ── Import ── */}
+          <div style={{ fontSize: 10, letterSpacing: 3, color: C.muted, marginBottom: 12, fontFamily: "'DM Mono', monospace", textTransform: "uppercase" }}>Import Existing</div>
           <div
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
@@ -765,26 +900,21 @@ export default function GanttApp() {
             onClick={() => fileRef.current.click()}
             style={{
               border: `2px dashed ${dragOver ? C.accent : C.border}`, borderRadius: 16,
-              padding: "60px 40px", cursor: "pointer",
+              padding: "36px 40px", cursor: "pointer",
               background: dragOver ? C.accentDim + "55" : C.surface,
-              transition: "all 0.2s", marginBottom: 24,
+              transition: "all 0.2s", marginBottom: 16,
             }}
           >
-            <div style={{ fontSize: 48, marginBottom: 16 }}>📂</div>
-            <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 16 }}>Drop your .xlsx or .csv file here</div>
-            <div style={{ color: C.muted, fontSize: 13 }}>or click to browse</div>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>📂</div>
+            <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 15 }}>Drop your .xlsx or .csv file here</div>
+            <div style={{ color: C.muted, fontSize: 12 }}>Session XLSX restores full state · Task XLSX/CSV imports a fresh list</div>
             <input ref={fileRef} type="file" accept=".xlsx,.csv" style={{ display: "none" }} onChange={(e) => handleFile(e.target.files[0])} />
           </div>
 
-          <div style={{ fontSize: 11, color: C.muted, background: C.surface, borderRadius: 10, padding: "16px 20px", textAlign: "left", border: `1px solid ${C.border}` }}>
-            <div style={{ color: C.text, marginBottom: 8, fontWeight: 600 }}>Drop a task file or a saved session:</div>
-            <div style={{ marginBottom: 10, lineHeight: 1.7 }}>
-              <span style={{ color: C.accent }}>Session XLSX</span> — restores your full work (assignments, progress, holidays, resources)<br />
-              <span style={{ color: C.accent }}>Task XLSX / CSV</span> — imports a fresh task list
-            </div>
+          <div style={{ fontSize: 11, color: C.muted, background: C.surface, borderRadius: 10, padding: "14px 18px", textAlign: "left", border: `1px solid ${C.border}` }}>
             <div style={{ color: C.text, marginBottom: 6, fontWeight: 600 }}>Expected task columns:</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Assignee", "Integration Effort"].map((col) => (
+              {["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Assignee", "Fixed Start Date", "Integration Effort"].map((col) => (
                 <span key={col} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 4, padding: "2px 8px", fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{col}</span>
               ))}
             </div>
@@ -811,7 +941,7 @@ export default function GanttApp() {
 
       {/* Top bar */}
       <div style={{ display: "flex", alignItems: "center", padding: "0 20px", height: 52, borderBottom: `1px solid ${C.border}`, gap: 20, flexShrink: 0, background: C.surface }}>
-        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: 3, color: C.accent }}>GANTT</div>
+        <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: 3, color: C.accent, flexShrink: 0 }}>GANTT</div>
         <div style={{ display: "flex", gap: 2 }}>
           {["gantt", "workload", "settings"].map((t) => (
             <button key={t} onClick={() => setTab(t)} style={{
@@ -822,8 +952,19 @@ export default function GanttApp() {
             }}>{t}</button>
           ))}
         </div>
-        <div style={{ flex: 1 }} />
-        <div style={{ fontSize: 11, color: C.muted }}>
+        {/* Project name — editable inline */}
+        <input
+          value={projectName}
+          onChange={e => setProjectName(e.target.value)}
+          placeholder="Untitled project"
+          title="Project name"
+          style={{
+            flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none",
+            color: projectName ? C.text : C.muted, fontSize: 14, fontWeight: 600,
+            fontFamily: "'DM Sans', sans-serif", textAlign: "center",
+          }}
+        />
+        <div style={{ fontSize: 11, color: C.muted, flexShrink: 0 }}>
           Predicted finish: <span style={{ color: C.green, fontFamily: "'DM Mono', monospace" }}>{projectEnd}</span>
         </div>
         <div style={{ display: "flex", gap: 2 }}>
@@ -848,12 +989,15 @@ export default function GanttApp() {
           <button onClick={undoOptimization} style={{ background: C.yellow, border: "none", color: C.bg, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Undo last optimization">↶ Undo</button>
         )}
         <button
-          onClick={quickSave}
+          onClick={() => quickSave()}
           disabled={saveStatus === "saving"}
           title={sessionFileHandle ? `Quick Save → ${sessionFileName}` : "Quick Save (will ask where to save)"}
-          style={{ background: saveStatus === "saved" ? C.green : C.surface, border: `1px solid ${saveStatus === "saved" ? C.green : C.border}`, color: saveStatus === "saved" ? "#fff" : C.text, borderRadius: 6, padding: "4px 12px", cursor: saveStatus === "saving" ? "default" : "pointer", fontSize: 11, fontWeight: 600, transition: "background 0.2s, border-color 0.2s, color 0.2s" }}
-        >{saveStatus === "saving" ? "💾 Saving…" : saveStatus === "saved" ? "✓ Saved" : "💾 Quick Save"}</button>
-        <button onClick={() => setScreen("import")} style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11 }}>↑ Import</button>
+          style={{ background: saveStatus === "saved" ? C.green : C.surface, border: `1px solid ${saveStatus === "saved" ? C.green : isDirty ? C.yellow : C.border}`, color: saveStatus === "saved" ? "#fff" : C.text, borderRadius: 6, padding: "4px 12px", cursor: saveStatus === "saving" ? "default" : "pointer", fontSize: 11, fontWeight: 600, transition: "background 0.2s, border-color 0.2s, color 0.2s", display: "flex", alignItems: "center", gap: 4 }}
+        >
+          {saveStatus === "saving" ? "💾 Saving…" : saveStatus === "saved" ? "✓ Saved" : "💾 Quick Save"}
+          {isDirty && !saveStatus && <span style={{ color: C.yellow, fontSize: 8, lineHeight: 1 }}>●</span>}
+        </button>
+        <button onClick={safeNavigateToImport} style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11 }}>↑ Import</button>
       </div>
 
       {/* ── GANTT TAB ── */}
@@ -1479,6 +1623,16 @@ export default function GanttApp() {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32, maxWidth: 820 }}>
 
             <div>
+              <SLabel C={C}>PROJECT NAME</SLabel>
+              <input
+                value={projectName}
+                onChange={e => setProjectName(e.target.value)}
+                placeholder="e.g. Q3 Platform Migration"
+                style={makeIStyle(C)}
+              />
+            </div>
+
+            <div>
               <SLabel C={C}>PROJECT START DATE</SLabel>
               <input type="date" value={projectStart} onChange={(e) => { if (e.target.value) setProjectStart(e.target.value); }} style={makeIStyle(C)} />
             </div>
@@ -1587,6 +1741,9 @@ export default function GanttApp() {
           C={C}
         />
       )}
+
+      {/* Project name prompt — shown before first save when name not set */}
+      {namePrompt && <NamePromptModal C={C} onConfirm={(name) => { setProjectName(name); setNamePrompt(null); namePrompt.afterName(name); }} onSkip={() => { setNamePrompt(null); namePrompt.afterName(""); }} />}
     </div>
   );
 }
