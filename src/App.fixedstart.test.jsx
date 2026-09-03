@@ -182,3 +182,77 @@ describe("Session XLSX: FIXED START DATES section", () => {
     expect(screen.queryByTitle(/Fixed start/)).not.toBeInTheDocument();
   });
 });
+
+// ── Epic column (Jira epic reference link) ─────────────────────────────────────
+
+describe("CSV import with Epic column", () => {
+  it("shows a clickable epic link badge when the Epic column is a valid URL", async () => {
+    const csv = [
+      CSV_HEADER + ",Epic",
+      "1,,Task with epic,,,M,1,Alice,,https://example.atlassian.net/browse/PROJ-123",
+    ].join("\n");
+    await loadCSV(csv);
+
+    fireEvent.click(screen.getByRole('button', { name: /workload/i }));
+    const link = await screen.findByTitle("Open Jira epic: https://example.atlassian.net/browse/PROJ-123");
+    expect(link).toHaveAttribute("href", "https://example.atlassian.net/browse/PROJ-123");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+  });
+
+  it("does not render a link badge when the Epic column is empty (backward compat)", async () => {
+    const csv = [
+      CSV_HEADER,
+      "1,,Task without epic,,,M,1,Alice,",
+    ].join("\n");
+    await loadCSV(csv);
+
+    fireEvent.click(screen.getByRole('button', { name: /workload/i }));
+    expect(screen.queryByTitle(/Open Jira epic/)).not.toBeInTheDocument();
+  });
+
+  it("does not render a link badge for an unsafe (non-http) Epic value", async () => {
+    const csv = [
+      CSV_HEADER + ",Epic",
+      "1,,Task with bad epic,,,M,1,Alice,,javascript:alert(1)",
+    ].join("\n");
+    await loadCSV(csv);
+
+    fireEvent.click(screen.getByRole('button', { name: /workload/i }));
+    expect(screen.queryByTitle(/Open Jira epic/)).not.toBeInTheDocument();
+  });
+});
+
+describe("Session XLSX: Epic column round-trip", () => {
+  it("restores the Epic link from the Schedule sheet's Epic column", async () => {
+    const wb = new ExcelJS.Workbook();
+    const schedWS = wb.addWorksheet("Schedule");
+    schedWS.addRow(["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Epic"]);
+    schedWS.addRow([1, "", "Epic task", "", "Open", "M", 1, "", "", "Alice", 0, "https://example.atlassian.net/browse/PROJ-9"]);
+
+    const sessWS = wb.addWorksheet("Session");
+    [
+      ["GANTT SESSION DATA — import this file to restore your work"], [],
+      ["PROJECT START", "2026-06-01"], ["THEME", "dark"], [],
+      ["RESOURCES"], ["Alice"], [],
+      ["PUBLIC HOLIDAYS"], [],
+      ["VACATION DAYS", "Person", "Date"], [],
+      ["ASSIGNMENTS", "Serial Number", "Assignee"], ["", "1", "Alice"], [],
+      ["PROGRESS", "Serial Number", "Percent"], ["", "1", 0], [],
+      ["STATUSES", "Serial Number", "Status"], ["", "1", "Open"],
+    ].forEach(r => sessWS.addRow(r));
+
+    const wlWS = wb.addWorksheet("Workload");
+    wlWS.addRow(["Person", "Tasks", "Total Days", "Finishes"]);
+
+    const buf = Buffer.from(await wb.xlsx.writeBuffer());
+    render(<App />);
+    const file = new File([buf], "session.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
+    await waitFor(() => expect(screen.getByTitle(/optimize/i)).toBeInTheDocument(), { timeout: 5000 });
+
+    fireEvent.click(screen.getByRole('button', { name: /workload/i }));
+    const link = await screen.findByTitle("Open Jira epic: https://example.atlassian.net/browse/PROJ-9");
+    expect(link).toHaveAttribute("href", "https://example.atlassian.net/browse/PROJ-9");
+  });
+});
