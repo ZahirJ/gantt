@@ -3,7 +3,7 @@ import { useState } from "react";
 const SIZE_DAYS_MAP = { S: "1", M: "3", L: "5", XL: "10" };
 const TASK_STATUSES = ["Open", "In Progress", "Completed", "Open(May not need fix)"];
 
-export default function EditTaskModal({ task, fixedStartDate, keyMilestone = false, resources, rawTasks, categories, C, onSubmit, onClose }) {
+export default function EditTaskModal({ task, fixedStartDate, keyMilestone = false, resources, rawTasks, categories, C, onSubmit, onClose, checkFixedConflict }) {
   const [draft, setDraft] = useState({
     description: task["Description"] || "",
     category: task["Category"] || "",
@@ -18,9 +18,22 @@ export default function EditTaskModal({ task, fixedStartDate, keyMilestone = fal
     daysManuallySet: false,
   });
   const [error, setError] = useState("");
+  const [fixedConflict, setFixedConflict] = useState(null); // conflicting task or null
 
   function set(key, val) {
-    setDraft(d => ({ ...d, [key]: val }));
+    const next = { ...draft, [key]: val };
+    setDraft(next);
+    // Live conflict check whenever fixed date, assignee, or days change
+    if ((key === "fixedStartDate" || key === "assignee" || key === "days") && checkFixedConflict) {
+      const fd = key === "fixedStartDate" ? val : next.fixedStartDate;
+      const assignee = key === "assignee" ? val : next.assignee;
+      const days = key === "days" ? val : next.days;
+      if (fd && assignee) {
+        setFixedConflict(checkFixedConflict(task["Serial Number"], fd, assignee, days) || null);
+      } else {
+        setFixedConflict(null);
+      }
+    }
   }
 
   const otherSerials = rawTasks
@@ -37,10 +50,15 @@ export default function EditTaskModal({ task, fixedStartDate, keyMilestone = fal
     fontFamily: "'DM Mono', monospace", display: "block",
   };
 
-  function handleSubmit() {
+  function handleSubmit(overrideConflict = null) {
     if (!draft.description.trim()) { setError("Description is required."); return; }
     if (!parseInt(draft.days) || parseInt(draft.days) < 1) { setError("Days must be a positive number."); return; }
-    onSubmit(task["Serial Number"], draft);
+    // Recheck conflict in case user didn't trigger live check
+    if (checkFixedConflict && draft.fixedStartDate && draft.assignee && !overrideConflict) {
+      const conflict = checkFixedConflict(task["Serial Number"], draft.fixedStartDate, draft.assignee, draft.days);
+      if (conflict) { setFixedConflict(conflict); return; }
+    }
+    onSubmit(task["Serial Number"], draft, overrideConflict);
   }
 
   return (
@@ -146,17 +164,35 @@ export default function EditTaskModal({ task, fixedStartDate, keyMilestone = fal
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 type="date"
-                style={{ ...inputStyle, flex: 1 }}
+                style={{ ...inputStyle, flex: 1, borderColor: fixedConflict ? C.red : undefined }}
                 value={draft.fixedStartDate}
                 onChange={e => set("fixedStartDate", e.target.value)}
               />
               {draft.fixedStartDate && (
                 <button
-                  onClick={() => set("fixedStartDate", "")}
+                  onClick={() => { set("fixedStartDate", ""); setFixedConflict(null); }}
                   style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 8, padding: "8px 12px", cursor: "pointer", fontSize: 12, whiteSpace: "nowrap", flexShrink: 0 }}
                 >Clear</button>
               )}
             </div>
+            {fixedConflict && (
+              <div style={{ marginTop: 8, padding: "10px 12px", background: C.red + "18", border: `1px solid ${C.red}55`, borderRadius: 8 }}>
+                <div style={{ fontSize: 12, color: C.red, fontWeight: 600, marginBottom: 4 }}>Fixed date conflict</div>
+                <div style={{ fontSize: 11, color: C.text, marginBottom: 10 }}>
+                  This task overlaps with <strong>{fixedConflict["Description"]}</strong> (#{fixedConflict["Serial Number"]}) on the same resource. Choose a resolution:
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => { set("fixedStartDate", ""); setFixedConflict(null); }}
+                    style={{ background: C.inputBg, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontSize: 11 }}
+                  >Remove my fixed date</button>
+                  <button
+                    onClick={() => { setFixedConflict(null); handleSubmit({ clearFixedDateFor: String(fixedConflict["Serial Number"]) }); }}
+                    style={{ background: C.inputBg, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontSize: 11 }}
+                  >Remove fixed date from &ldquo;{fixedConflict["Description"]}&rdquo;</button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div>

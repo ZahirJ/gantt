@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import ExcelJS from "exceljs";
-import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize } from "./utils/scheduleUtils";
+import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize, detectFixedCollisions } from "./utils/scheduleUtils";
 import AddTaskModal from "./components/AddTaskModal";
 import EditTaskModal from "./components/EditTaskModal";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -372,7 +372,7 @@ export default function GanttApp() {
     setMilestones(prev => Object.fromEntries(Object.entries(prev).filter(([sn]) => remainingSNs.has(sn))));
   }
 
-  function submitEditTask(sn, draft) {
+  function submitEditTask(sn, draft, resolution = null) {
     setRawTasks(prev => prev.map(t =>
       t["Serial Number"] !== sn ? t : {
         ...t,
@@ -396,6 +396,8 @@ export default function GanttApp() {
       const n = { ...prev };
       if (draft.fixedStartDate) n[sn] = draft.fixedStartDate;
       else delete n[sn];
+      // If the user chose to clear another task's fixed date to resolve a conflict, do it here
+      if (resolution?.clearFixedDateFor) delete n[resolution.clearFixedDateFor];
       return n;
     });
     setMilestones(prev => {
@@ -405,6 +407,28 @@ export default function GanttApp() {
       return n;
     });
     setEditTaskModal(null);
+  }
+
+  function checkFixedConflict(editingSN, fixedDate, assignee, daysStr) {
+    if (!fixedDate || !assignee) return null;
+    const days = parseInt(daysStr) || 1;
+    const tStart = nextWorkday(
+      new Date(Math.max(new Date(fixedDate).getTime(), new Date(projectStart || fixedDate).getTime())),
+      holidays, vacMap, assignee
+    );
+    const tEnd = days > 1 ? addWorkdays(tStart, days - 1, holidays, vacMap, assignee) : new Date(tStart);
+    const tStartStr = fmtDate(tStart);
+    const tEndStr = fmtDate(tEnd);
+    // Check against other fixed tasks on the same resource
+    for (const t of scheduledTasks) {
+      const sn = String(t["Serial Number"]);
+      if (sn === String(editingSN)) continue;
+      if (!fixedStartDates[sn]) continue;
+      if (assignments[sn] !== assignee) continue;
+      if (!t._start || !t._end) continue;
+      if (tStartStr <= t._end && tEndStr >= t._start) return t;
+    }
+    return null;
   }
 
   function openEditModal(sn) {
@@ -566,6 +590,14 @@ export default function GanttApp() {
   const scheduledTasks = useMemo(() =>
     scheduleTasks(filteredRaw, assignments, holidays, vacMap, projectStart, fixedStartDates),
     [filteredRaw, assignments, holidays, vacMap, projectStart, fixedStartDates]);
+
+  const fixedCollisions = useMemo(() =>
+    detectFixedCollisions(scheduledTasks, fixedStartDates, assignments),
+    [scheduledTasks, fixedStartDates, assignments]);
+
+  function clearFixedDate(sn) {
+    setFixedStartDates(prev => { const n = { ...prev }; delete n[String(sn)]; return n; });
+  }
 
   const projectEnd = useMemo(() =>
     scheduledTasks.reduce((mx, t) => (t._end > mx ? t._end : mx), projectStart),
@@ -1023,6 +1055,25 @@ export default function GanttApp() {
         </button>
         <button onClick={safeNavigateToImport} style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11 }}>↑ Import</button>
       </div>
+
+      {fixedCollisions.length > 0 && (
+        <div style={{ padding: "8px 16px", background: C.red + "18", borderBottom: `1px solid ${C.red}55`, display: "flex", flexDirection: "column", gap: 6 }}>
+          {fixedCollisions.map(({ taskA, taskB, resource }) => (
+            <div key={`${taskA["Serial Number"]}-${taskB["Serial Number"]}`} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11, color: C.text }}>
+              <span style={{ color: C.red, fontWeight: 600 }}>Fixed date conflict:</span>
+              <span>&ldquo;{taskA["Description"]}&rdquo; (#{taskA["Serial Number"]}) and &ldquo;{taskB["Description"]}&rdquo; (#{taskB["Serial Number"]}) overlap on {resource}.</span>
+              <button
+                onClick={() => clearFixedDate(taskA["Serial Number"])}
+                style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: "3px 9px", cursor: "pointer", fontSize: 11 }}
+              >Clear #{taskA["Serial Number"]}&rsquo;s fixed date</button>
+              <button
+                onClick={() => clearFixedDate(taskB["Serial Number"])}
+                style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 6, padding: "3px 9px", cursor: "pointer", fontSize: 11 }}
+              >Clear #{taskB["Serial Number"]}&rsquo;s fixed date</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── GANTT TAB ── */}
       {tab === "gantt" && (
@@ -1821,6 +1872,7 @@ export default function GanttApp() {
             C={C}
             onSubmit={submitEditTask}
             onClose={() => setEditTaskModal(null)}
+            checkFixedConflict={checkFixedConflict}
           />
         );
       })()}
