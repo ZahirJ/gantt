@@ -3,6 +3,10 @@ import { useState } from "react";
 const SIZE_DAYS_MAP = { S: "1", M: "3", L: "5", XL: "10" };
 const TASK_STATUSES = ["Open", "In Progress", "Completed", "Open(May not need fix)"];
 
+function isSafeHttpUrl(s) {
+  try { return ["http:", "https:"].includes(new URL(s).protocol); } catch { return false; }
+}
+
 export default function EditTaskModal({ task, fixedStartDate, keyMilestone = false, resources, rawTasks, categories, C, onSubmit, onClose, checkFixedConflict }) {
   const [draft, setDraft] = useState({
     description: task["Description"] || "",
@@ -13,6 +17,7 @@ export default function EditTaskModal({ task, fixedStartDate, keyMilestone = fal
     status: task["Status"] || "Open",
     assignee: task["Assignee"] || "",
     integrationEffort: task["Integration Effort"] || "",
+    epic: task["Epic"] || "",
     fixedStartDate: fixedStartDate || "",
     keyMilestone: keyMilestone,
     daysManuallySet: false,
@@ -203,6 +208,29 @@ export default function EditTaskModal({ task, fixedStartDate, keyMilestone = fal
               onChange={e => set("integrationEffort", e.target.value)}
               placeholder="Optional"
             />
+          </div>
+
+          <div>
+            <label style={labelStyle}>EPIC</label>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="url"
+                style={{ ...inputStyle, flex: 1 }}
+                value={draft.epic}
+                onChange={e => set("epic", e.target.value)}
+                placeholder="Jira epic link (optional)"
+              />
+              {draft.epic && isSafeHttpUrl(draft.epic) && (
+                <a
+                  href={draft.epic}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  style={{ color: C.accent, fontSize: 12, whiteSpace: "nowrap", flexShrink: 0, textDecoration: "none" }}
+                  title="Open Jira epic"
+                >Open ↗</a>
+              )}
+            </div>
           </div>
 
           <div style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", background: draft.keyMilestone ? C.red + "11" : C.inputBg, border: `1px solid ${draft.keyMilestone ? C.red + "55" : C.border}`, borderRadius: 8, cursor: "pointer" }} onClick={() => set("keyMilestone", !draft.keyMilestone)}>

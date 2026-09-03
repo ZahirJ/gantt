@@ -15,6 +15,7 @@ export default function AddTaskModal({ initialSerial, resources, rawTasks, categ
     status: "Open",
     assignee: "",
     integrationEffort: "",
+    epic: "",
     daysManuallySet: false,
   });
   const [error, setError] = useState("");
@@ -179,6 +180,16 @@ export default function AddTaskModal({ initialSerial, resources, rawTasks, categ
                 value={draft.integrationEffort}
                 onChange={e => set("integrationEffort", e.target.value)}
                 placeholder="Optional"
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>EPIC</label>
+              <input
+                type="url"
+                style={inputStyle}
+                value={draft.epic}
+                onChange={e => set("epic", e.target.value)}
+                placeholder="Jira epic link (optional)"
               />
             </div>
             {/* Summary card */}

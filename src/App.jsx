@@ -262,6 +262,10 @@ function normalizeTasks(rows) {
     const kmRaw = row["Key Milestone"] ?? row["key milestone"] ?? row["Key milestone"] ?? "";
     const keyMilestone = ["true", "yes", "1"].includes(String(kmRaw).trim().toLowerCase()) ? "true" : "";
 
+    // Epic column (optional): Jira epic reference link
+    const epicRaw = row["Epic"] ?? row["epic"] ?? row["Jira Epic"] ?? row["Jira Link"] ?? "";
+    const epic = String(epicRaw).trim();
+
     return {
       ...row,
       "Serial Number": serial,
@@ -271,8 +275,21 @@ function normalizeTasks(rows) {
       "Status": row["Status"] || "Open",
       "Fixed Start Date": fixedStartDate,
       "Key Milestone": keyMilestone,
+      "Epic": epic,
     };
   });
+}
+
+function isSafeHttpUrl(s) {
+  try { return ["http:", "https:"].includes(new URL(s).protocol); } catch { return false; }
+}
+
+// Extracts a Jira ticket key (e.g. "ZENG-469932") from a Jira URL's last path segment.
+function jiraTicketLabel(url) {
+  try {
+    const segments = new URL(url).pathname.split("/").filter(Boolean);
+    return decodeURIComponent(segments[segments.length - 1] || url);
+  } catch { return url; }
 }
 
 function generateSerial(rawTasks) {
@@ -383,6 +400,7 @@ export default function GanttApp() {
         "Depends On": draft.dependsOn,
         "Status": draft.status,
         "Integration Effort": draft.integrationEffort,
+        "Epic": draft.epic || "",
       }
     ));
     setAssignments(prev => {
@@ -449,6 +467,7 @@ export default function GanttApp() {
       "Days": parseInt(draft.days) || 1,
       "Assignee": draft.assignee || "",
       "Integration Effort": draft.integrationEffort || "",
+      "Epic": draft.epic || "",
     }]);
     if (draft.assignee) setAssignments(prev => ({ ...prev, [sn]: draft.assignee }));
     setTaskStatuses(prev => ({ ...prev, [sn]: draft.status || "Open" }));
@@ -728,11 +747,11 @@ export default function GanttApp() {
   }
 
   function exportCSV() {
-    const headers = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Integration Effort"];
+    const headers = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Integration Effort", "Epic"];
     const rows = scheduledTasks.map((t) => [
       t["Serial Number"], t["Category"], t["Description"], t["Depends On"],
       getStatus(t["Serial Number"]), t["Complexity"], t["Days"], t._start, t._end,
-      assignments[t["Serial Number"]] || "", t["Integration Effort"],
+      assignments[t["Serial Number"]] || "", t["Integration Effort"], t["Epic"],
     ]);
     const csvCell = (c) => { const s = String(c ?? ""); return `"${(/^[=+\-@\t\r]/.test(s) ? `'${s}` : s).replace(/"/g, '""')}"`; };
     const csv = [headers, ...rows].map((r) => r.map(csvCell).join(",")).join("\n");
@@ -744,18 +763,19 @@ export default function GanttApp() {
 
   async function buildSessionBlob() {
     const wb = new ExcelJS.Workbook();
-    const scheduleHeaders = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Integration Effort", "Fixed Start Date", "Key Milestone"];
+    const scheduleHeaders = ["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Start Date", "End Date", "Assignee", "Progress %", "Integration Effort", "Fixed Start Date", "Key Milestone", "Epic"];
     const scheduleRows = scheduledTasks.map((t) => [
       t["Serial Number"], t["Category"], t["Description"], t["Depends On"],
       getStatus(t["Serial Number"]), t["Complexity"], t["Days"], t._start, t._end,
       assignments[t["Serial Number"]] || "", progress[t["Serial Number"]] ?? 0, t["Integration Effort"],
       fixedStartDates[t["Serial Number"]] || "",
       milestones[t["Serial Number"]] ? "true" : "",
+      t["Epic"] || "",
     ]);
     const schedWS = wb.addWorksheet("Schedule");
     schedWS.addRow(scheduleHeaders);
     scheduleRows.forEach((r) => schedWS.addRow(r));
-    [14, 22, 50, 14, 14, 12, 8, 12, 12, 16, 12, 18, 14, 14].forEach((w, i) => { schedWS.getColumn(i + 1).width = w; });
+    [14, 22, 50, 14, 14, 12, 8, 12, 12, 16, 12, 18, 14, 14, 30].forEach((w, i) => { schedWS.getColumn(i + 1).width = w; });
 
     const sessionRows = [
       ["GANTT SESSION DATA — import this file to restore your work"], [],
@@ -970,7 +990,7 @@ export default function GanttApp() {
           <div style={{ fontSize: 11, color: C.muted, background: C.surface, borderRadius: 10, padding: "14px 18px", textAlign: "left", border: `1px solid ${C.border}` }}>
             <div style={{ color: C.text, marginBottom: 6, fontWeight: 600 }}>Expected task columns:</div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Assignee", "Fixed Start Date", "Integration Effort"].map((col) => (
+              {["Serial Number", "Category", "Description", "Depends On", "Status", "Complexity", "Days", "Assignee", "Fixed Start Date", "Integration Effort", "Epic"].map((col) => (
                 <span key={col} style={{ background: C.card, border: `1px solid ${C.border}`, borderRadius: 4, padding: "2px 8px", fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{col}</span>
               ))}
             </div>
@@ -1122,7 +1142,19 @@ export default function GanttApp() {
                       }}>
                       <span style={{ width: 26, fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{sn}</span>
                       <div style={{ flex: 1, overflow: "hidden" }}>
-                        <div style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: completed ? C.muted : C.text }} title={task["Description"]}>{task["Description"]}</div>
+                        <div style={{ fontSize: 11, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: completed ? C.muted : C.text, display: "flex", alignItems: "center", gap: 4 }}>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }} title={task["Description"]}>{task["Description"]}</span>
+                          {task["Epic"] && isSafeHttpUrl(task["Epic"]) && (
+                            <a
+                              href={task["Epic"]}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              title={`Open Jira epic: ${task["Epic"]}`}
+                              style={{ color: C.accent, textDecoration: "none", flexShrink: 0, fontSize: 10 }}
+                            >🔗</a>
+                          )}
+                        </div>
                         <select
                           value={currentStatus}
                           onChange={(e) => setTaskStatus(sn, e.target.value)}
@@ -1290,6 +1322,16 @@ export default function GanttApp() {
                               )}
                               {milestones[sn] && (
                                 <span title="Key milestone" style={{ fontSize: 11, flexShrink: 0, lineHeight: 1 }}>⭐</span>
+                              )}
+                              {task["Epic"] && isSafeHttpUrl(task["Epic"]) && (
+                                <a
+                                  href={task["Epic"]}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={e => e.stopPropagation()}
+                                  title={`Open Jira epic: ${task["Epic"]}`}
+                                  style={{ color: col, fontWeight: 700, textDecoration: "underline", flexShrink: 0 }}
+                                >{jiraTicketLabel(task["Epic"])}</a>
                               )}
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
                                 {pct > 0 ? `${pct}% · ` : ""}{task["Description"]}
@@ -1535,6 +1577,16 @@ export default function GanttApp() {
                           {fixedStartDates[sn] && (
                             <span title={`Fixed start: ${fixedStartDates[sn]}`} style={{ fontSize: 8, color: C.yellow, fontFamily: "'DM Mono', monospace", flexShrink: 0, background: C.yellow + "22", borderRadius: 3, padding: "1px 4px", border: `1px solid ${C.yellow}55` }}>FIX</span>
                           )}
+                          {t["Epic"] && isSafeHttpUrl(t["Epic"]) && (
+                            <a
+                              href={t["Epic"]}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              title={`Open Jira epic: ${t["Epic"]}`}
+                              style={{ color: C.accent, textDecoration: "none", flexShrink: 0, fontSize: 10 }}
+                            >🔗</a>
+                          )}
                           {!completed && <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>}
                         </div>
                       );
@@ -1631,6 +1683,16 @@ export default function GanttApp() {
                             {t["Description"]}
                           </span>
                           <span style={{ fontSize: 9, color: taskColor, whiteSpace: "nowrap", flexShrink: 0, fontFamily: "'DM Mono', monospace" }}>{t["Days"]}d</span>
+                          {t["Epic"] && isSafeHttpUrl(t["Epic"]) && (
+                            <a
+                              href={t["Epic"]}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              title={`Open Jira epic: ${t["Epic"]}`}
+                              style={{ color: C.accent, textDecoration: "none", flexShrink: 0, fontSize: 10 }}
+                            >🔗</a>
+                          )}
                           <span style={{ fontSize: 9, color: C.muted, flexShrink: 0 }}>⠿</span>
                         </div>
                       );
