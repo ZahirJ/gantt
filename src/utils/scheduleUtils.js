@@ -34,12 +34,65 @@ export function addWorkdays(date, extraDays, holidays, vacMap, person) {
   return d;
 }
 
+// Finds the earliest start (>= earliest) for a task of `days` workdays that doesn't
+// overlap any window in `occupied`. Uses YYYY-MM-DD string comparisons to avoid TZ issues.
+function findGapStart(earliest, days, occupied, person, holidays, vacMap) {
+  let candidate = nextWorkday(new Date(earliest), holidays, vacMap, person);
+  for (let i = 0; i < 2000; i++) {
+    const end = days > 1 ? addWorkdays(candidate, days - 1, holidays, vacMap, person) : new Date(candidate);
+    const cs = fmtDate(candidate);
+    const es = fmtDate(end);
+    const hit = occupied.find(w => cs <= fmtDate(w.end) && es >= fmtDate(w.start));
+    if (!hit) return candidate;
+    const after = new Date(hit.end);
+    after.setDate(after.getDate() + 1);
+    candidate = nextWorkday(after, holidays, vacMap, person);
+  }
+  return candidate;
+}
+
+export function detectFixedCollisions(scheduledTasks, fixedStartDates, assignments) {
+  const fixedTasks = scheduledTasks.filter(t => fixedStartDates[String(t["Serial Number"])] && t._start && t._end);
+  const collisions = [];
+  for (let i = 0; i < fixedTasks.length; i++) {
+    for (let j = i + 1; j < fixedTasks.length; j++) {
+      const a = fixedTasks[i];
+      const b = fixedTasks[j];
+      const aRes = assignments[String(a["Serial Number"])];
+      if (!aRes || aRes !== assignments[String(b["Serial Number"])]) continue;
+      if (a._start <= b._end && a._end >= b._start)
+        collisions.push({ taskA: a, taskB: b, resource: aRes });
+    }
+  }
+  return collisions;
+}
+
 export function scheduleTasks(rawTasks, assignments, holidays, vacMap, projectStart, fixedStartDates = {}) {
   // Bail out silently if the date is still being typed (partial / invalid value)
   if (!projectStart || isNaN(new Date(projectStart).getTime())) return rawTasks.map((t) => ({ ...t, _start: null, _end: null }));
   const tasks = rawTasks.map((t) => ({ ...t, _start: null, _end: null }));
   const done = new Set();
   let safety = tasks.length * 4;
+
+  // Pre-compute tentative windows for fixed tasks so non-fixed tasks can avoid those slots.
+  // A tentative window is based solely on the fixed date + task duration (deps may push the
+  // actual start later, but we reserve the slot conservatively from the fixed date onward).
+  const tentativeFixedWindows = {}; // person -> [{ start: Date, end: Date, sn }]
+  for (const task of tasks) {
+    const sn = task["Serial Number"];
+    const fixed = fixedStartDates[sn];
+    if (!fixed) continue;
+    const person = assignments[sn];
+    if (!person) continue;
+    const tStart = nextWorkday(
+      new Date(Math.max(new Date(fixed).getTime(), new Date(projectStart).getTime())),
+      holidays, vacMap, person
+    );
+    const tDays = parseInt(task["Days"]) || 1;
+    const tEnd = tDays > 1 ? addWorkdays(tStart, tDays - 1, holidays, vacMap, person) : new Date(tStart);
+    if (!tentativeFixedWindows[person]) tentativeFixedWindows[person] = [];
+    tentativeFixedWindows[person].push({ start: tStart, end: tEnd, sn });
+  }
 
   while (done.size < tasks.length && safety-- > 0) {
     for (const task of tasks) {
@@ -59,29 +112,36 @@ export function scheduleTasks(rawTasks, assignments, holidays, vacMap, projectSt
       }
 
       const person = assignments[sn] || null;
-      let personFree = new Date(projectStart);
-      if (person) {
-        tasks.forEach((t) => {
-          if (t["Serial Number"] !== sn && assignments[t["Serial Number"]] === person && t._end) {
-            const te = new Date(t._end);
-            te.setDate(te.getDate() + 1);
-            if (te > personFree) personFree = new Date(te);
-          }
-        });
-      }
-
-      let start = new Date(Math.max(earliest.getTime(), personFree.getTime()));
-      // Fixed start date acts as a floor: task cannot begin before this date
-      const fixed = fixedStartDates[sn];
-      if (fixed) {
-        const fixedDate = new Date(fixed);
-        if (fixedDate > start) start = fixedDate;
-      }
-      start = nextWorkday(start, holidays, vacMap, person);
-
       const days = parseInt(task["Days"]) || 1;
-      const end = days > 1 ? addWorkdays(start, days - 1, holidays, vacMap, person) : new Date(start);
+      const fixed = fixedStartDates[sn];
 
+      let start;
+      if (fixed) {
+        // Fixed task: start at max(deps end, fixed date). Non-fixed tasks yield to fixed tasks,
+        // so we ignore their occupancy here — fixed-fixed collisions are reported separately.
+        const fixedDate = new Date(fixed);
+        if (fixedDate > earliest) earliest = fixedDate;
+        start = nextWorkday(earliest, holidays, vacMap, person);
+      } else if (person) {
+        // Non-fixed task: find earliest gap that avoids all fixed task windows.
+        const occupied = [];
+        // Already-scheduled tasks on this person (fixed and non-fixed)
+        tasks.forEach((t) => {
+          const tsn = t["Serial Number"];
+          if (tsn !== sn && assignments[tsn] === person && t._start && t._end)
+            occupied.push({ start: new Date(t._start), end: new Date(t._end) });
+        });
+        // Tentative fixed windows not yet scheduled
+        for (const w of (tentativeFixedWindows[person] || [])) {
+          if (w.sn !== sn && !done.has(w.sn))
+            occupied.push({ start: new Date(w.start), end: new Date(w.end) });
+        }
+        start = findGapStart(earliest, days, occupied, person, holidays, vacMap);
+      } else {
+        start = nextWorkday(earliest, holidays, vacMap, null);
+      }
+
+      const end = days > 1 ? addWorkdays(start, days - 1, holidays, vacMap, person) : new Date(start);
       task._start = fmtDate(start);
       task._end = fmtDate(end);
       done.add(sn);
