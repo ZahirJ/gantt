@@ -81,7 +81,8 @@ describe('App Component', () => {
         'Complexity',
         'Days',
         'Assignee',
-        'Integration Effort'
+        'Integration Effort',
+        'Epic'
       ];
 
       columnTexts.forEach(col => {
