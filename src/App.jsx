@@ -284,6 +284,14 @@ function isSafeHttpUrl(s) {
   try { return ["http:", "https:"].includes(new URL(s).protocol); } catch { return false; }
 }
 
+// Extracts a Jira ticket key (e.g. "ZENG-469932") from a Jira URL's last path segment.
+function jiraTicketLabel(url) {
+  try {
+    const segments = new URL(url).pathname.split("/").filter(Boolean);
+    return decodeURIComponent(segments[segments.length - 1] || url);
+  } catch { return url; }
+}
+
 function generateSerial(rawTasks) {
   const nums = rawTasks.map(t => parseInt(t["Serial Number"], 10)).filter(n => !isNaN(n));
   return String(nums.length > 0 ? Math.max(...nums) + 1 : rawTasks.length + 1);
@@ -1314,6 +1322,16 @@ export default function GanttApp() {
                               )}
                               {milestones[sn] && (
                                 <span title="Key milestone" style={{ fontSize: 11, flexShrink: 0, lineHeight: 1 }}>⭐</span>
+                              )}
+                              {task["Epic"] && isSafeHttpUrl(task["Epic"]) && (
+                                <a
+                                  href={task["Epic"]}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={e => e.stopPropagation()}
+                                  title={`Open Jira epic: ${task["Epic"]}`}
+                                  style={{ color: col, fontWeight: 700, textDecoration: "underline", flexShrink: 0 }}
+                                >{jiraTicketLabel(task["Epic"])}</a>
                               )}
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
                                 {pct > 0 ? `${pct}% · ` : ""}{task["Description"]}
