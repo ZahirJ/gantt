@@ -1,4 +1,4 @@
-import { fmtDate, scheduleTasks, levelOptimize } from "./scheduleUtils";
+import { fmtDate, scheduleTasks, levelOptimize, detectFixedCollisions } from "./scheduleUtils";
 
 describe("fmtDate", () => {
   it("formats a date string to YYYY-MM-DD", () => {
@@ -135,6 +135,85 @@ describe("scheduleTasks", () => {
       const [t] = scheduleTasks([task(1, 1)], {}, NO_HOLIDAYS, NO_VAC, MON);
       expect(t._start).toBe("2026-06-01");
     });
+
+    it("non-fixed task on the same resource is scheduled around a later fixed task's window", () => {
+      // Task 1 (non-fixed, 3 days) would naturally run Mon–Wed, but Task 2 (fixed, 1 day) reserves
+      // Tue for the same person, so Task 1 must find a gap that avoids Tue.
+      const tasks = [task(1, 3), task(2, 1)];
+      const assignments = { "1": "Alice", "2": "Alice" };
+      const fixedStartDates = { "2": "2026-06-02" }; // Tuesday
+      const [t1, t2] = scheduleTasks(tasks, assignments, NO_HOLIDAYS, NO_VAC, MON, fixedStartDates);
+      expect(t2._start).toBe("2026-06-02");
+      expect(t2._end).toBe("2026-06-02");
+      // t1 must not overlap [2026-06-02, 2026-06-02]
+      expect(t1._start <= t2._end && t1._end >= t2._start).toBe(false);
+    });
+
+    it("non-fixed task is pushed after a fixed task's window when no earlier gap exists", () => {
+      const tasks = [task(1, 2), task(2, 1)];
+      const assignments = { "1": "Alice", "2": "Alice" };
+      const fixedStartDates = { "2": "2026-06-01" }; // Monday, same day project starts
+      const [t1, t2] = scheduleTasks(tasks, assignments, NO_HOLIDAYS, NO_VAC, MON, fixedStartDates);
+      expect(t2._start).toBe("2026-06-01");
+      expect(t1._start).toBe("2026-06-02"); // pushed to Tuesday, after the fixed slot
+    });
+  });
+});
+
+// ── detectFixedCollisions ────────────────────────────────────────────────────
+
+describe("detectFixedCollisions", () => {
+  function scheduled(sn, start, end, extra = {}) {
+    return { "Serial Number": String(sn), "Description": `Task ${sn}`, _start: start, _end: end, ...extra };
+  }
+
+  it("returns no collisions when there are no fixed tasks", () => {
+    const scheduledTasks = [scheduled(1, "2026-06-01", "2026-06-01")];
+    expect(detectFixedCollisions(scheduledTasks, {}, {})).toEqual([]);
+  });
+
+  it("returns no collisions when fixed tasks are on different resources", () => {
+    const scheduledTasks = [
+      scheduled(1, "2026-06-01", "2026-06-02"),
+      scheduled(2, "2026-06-01", "2026-06-02"),
+    ];
+    const fixedStartDates = { "1": "2026-06-01", "2": "2026-06-01" };
+    const assignments = { "1": "Alice", "2": "Bob" };
+    expect(detectFixedCollisions(scheduledTasks, fixedStartDates, assignments)).toEqual([]);
+  });
+
+  it("returns no collisions when fixed tasks on the same resource don't overlap", () => {
+    const scheduledTasks = [
+      scheduled(1, "2026-06-01", "2026-06-01"),
+      scheduled(2, "2026-06-02", "2026-06-02"),
+    ];
+    const fixedStartDates = { "1": "2026-06-01", "2": "2026-06-02" };
+    const assignments = { "1": "Alice", "2": "Alice" };
+    expect(detectFixedCollisions(scheduledTasks, fixedStartDates, assignments)).toEqual([]);
+  });
+
+  it("detects a collision between two fixed tasks overlapping on the same resource", () => {
+    const scheduledTasks = [
+      scheduled(1, "2026-06-01", "2026-06-03"),
+      scheduled(2, "2026-06-02", "2026-06-04"),
+    ];
+    const fixedStartDates = { "1": "2026-06-01", "2": "2026-06-02" };
+    const assignments = { "1": "Alice", "2": "Alice" };
+    const collisions = detectFixedCollisions(scheduledTasks, fixedStartDates, assignments);
+    expect(collisions).toHaveLength(1);
+    expect(collisions[0].resource).toBe("Alice");
+    expect(collisions[0].taskA["Serial Number"]).toBe("1");
+    expect(collisions[0].taskB["Serial Number"]).toBe("2");
+  });
+
+  it("ignores tasks without a resolved schedule", () => {
+    const scheduledTasks = [
+      scheduled(1, null, null),
+      scheduled(2, "2026-06-01", "2026-06-01"),
+    ];
+    const fixedStartDates = { "1": "2026-06-01", "2": "2026-06-01" };
+    const assignments = { "1": "Alice", "2": "Alice" };
+    expect(detectFixedCollisions(scheduledTasks, fixedStartDates, assignments)).toEqual([]);
   });
 });
 
