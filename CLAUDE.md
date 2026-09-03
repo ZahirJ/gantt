@@ -18,7 +18,7 @@ npm run build      # Production build
 This is a single-page React app with **no backend, no routing, and no external state management**. Source files:
 
 - `src/App.jsx` — all UI, import/export, drag-and-drop, and theme logic
-- `src/utils/scheduleUtils.js` — pure scheduling helpers (`fmtDate`, `scheduleTasks`, `isWorkday`, etc.) and the `levelOptimize` function; imported by both App.jsx and tests
+- `src/utils/scheduleUtils.js` — pure scheduling helpers (`fmtDate`, `scheduleTasks`, `isWorkday`, etc.), `detectFixedCollisions` (fixed-start-date conflict detection), and the `levelOptimize` function; imported by both App.jsx and tests
 - `src/utils/taskMutations.js` — pure helpers for task deletion and unassignment (`applyDeleteTask`, `applyDeleteAllUnassigned`, `applyUnassignAllForPerson`); take plain state objects and return new state objects without side effects
 - `src/utils/optimize.js` — legacy standalone optimizer (greedy local-search); kept for its test suite
 - `src/components/AddTaskModal.jsx` — multi-step modal for creating a new task
@@ -97,9 +97,22 @@ When unassigned tasks exist, an "Unassigned" card appears at the end of the reso
 
 Visual indicators: Gantt bars show a yellow left-edge stripe (`inset box-shadow`) and a **FIX** badge; workload cards show a **FIX** chip. Both have a tooltip with the fixed date.
 
+**Conflict detection**: `detectFixedCollisions(scheduledTasks, fixedStartDates, assignments)` in `scheduleUtils.js` flags pairs of fixed-start-date tasks on the same resource whose date windows overlap. `scheduleTasks` itself also has non-fixed tasks route around any fixed task's reserved window on the same resource (via `findGapStart`), so only fixed-vs-fixed overlaps can still collide. Detected collisions render as a dismissible red banner at the top of the Gantt tab, each with "Clear fixed date" buttons for either task.
+
+The Edit Task modal additionally runs `checkFixedConflict(editingSN, fixedDate, assignee, days)` (defined in App.jsx, passed down as a prop) live as the user edits the fixed date/assignee/days fields; on a conflict it shows inline resolution buttons ("Remove my fixed date" or "Remove fixed date from the other task", the latter passed back to `submitEditTask` as a `resolution.clearFixedDateFor` override).
+
+### Epic (Jira reference link)
+
+`Epic` is an optional per-task field (like `Integration Effort`) holding a full URL to a Jira epic/ticket, e.g. `https://jira.zeng.bmc.com/browse/ZENG-469932`. Unlike `fixedStartDates`/`milestones`, it lives directly on the task row in `rawTasks` rather than a separate keyed map. Set via the Add/Edit Task modals; imported from an `Epic`/`Jira Epic`/`Jira Link` column (case-insensitive) via `normalizeTasks`; exported in CSV and the Session sheet's `Epic` column.
+
+Rendering: `isSafeHttpUrl()` gates all link rendering to `http(s)` URLs only (defends against `javascript:` injection from imported data). `jiraTicketLabel(url)` extracts the last URL path segment (e.g. `ZENG-469932`) to use as link text. Shown as:
+- An underlined ticket-key link directly inside the Gantt bar (alongside the TEST/UNSET/FIX/⭐ badges)
+- A 🔗 icon next to the description in the Gantt label column, and on Workload cards (assigned and unassigned)
+- A live "Open ↗" link in the Edit Task modal as the URL is typed
+
 ### Edit Task modal
 
-`EditTaskModal.jsx` is a single-page (no steps) form for editing an existing task. Editable fields: Description, Category, Days, Complexity, Status, Depends On, Assignee, Fixed Start Date, Integration Effort. Serial Number is always read-only. Assignee and Status are pre-populated from live state (not from the stale import value stored in `rawTasks`).
+`EditTaskModal.jsx` is a single-page (no steps) form for editing an existing task. Editable fields: Description, Category, Days, Complexity, Status, Depends On, Assignee, Fixed Start Date, Integration Effort, Epic. Serial Number is always read-only. Assignee and Status are pre-populated from live state (not from the stale import value stored in `rawTasks`).
 
 `submitEditTask(sn, draft)` in App.jsx updates `rawTasks` (task fields), `assignments`, `taskStatuses`/`progress` (via `setTaskStatus`), and `fixedStartDates`.
 
