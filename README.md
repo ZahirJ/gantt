@@ -17,8 +17,9 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Week and month zoom levels
 - Filter tasks by category
 - Test tasks are highlighted with a distinct color and TEST badge
-- **Fixed Start Date** — optional per-task constraint; the task will not start before the given date (set via Edit Task modal or imported from a `Fixed Start Date` column). Shown as a yellow left-edge stripe and a **FIX** badge on the bar
+- **Fixed Start Date** — optional per-task constraint; the task will not start before the given date (set via Edit Task modal or imported from a `Fixed Start Date` column). Shown as a yellow left-edge stripe and a **FIX** badge on the bar. Non-fixed tasks automatically schedule around a fixed task's reserved slot on the same resource; if two fixed tasks still collide, a dismissible conflict banner appears at the top of the Gantt tab with one-click buttons to clear either task's fixed date
 - **Key Milestones** — flag any task as a key milestone via the ⭐ button on the task row or via the Edit Task modal. A dotted red vertical line crosses the entire chart at the task's end date, and a vertical label row above the bars shows each milestone's name. Hover the label for a tooltip with the full name
+- **Epic** — optional per-task Jira reference link (set via Add/Edit Task modal or imported from an `Epic` column). The ticket key (e.g. `ZENG-469932`) is shown as a clickable link directly on the Gantt bar, plus a 🔗 icon next to the task description and on Workload cards — click to open the Jira epic in a new tab
 - **Delete task** — click the `×` button on any row to remove a single task (confirmation required)
 - **Delete all unassigned** — toolbar button removes every task with no assignee at once (visible only when unassigned tasks exist, confirmation required)
 
@@ -107,6 +108,7 @@ The app accepts `.xlsx` and `.csv` files. Drag and drop onto the import screen o
 | `Integration Effort` | `Yes` / `No` — informational, not used in scheduling |
 | `Fixed Start Date` | Optional. `YYYY-MM-DD` — task will not start before this date regardless of dependencies |
 | `Key Milestone` | Optional. `true` / `yes` / `1` — marks the task as a key milestone |
+| `Epic` | Optional. Full Jira ticket URL (e.g. `https://yourorg.atlassian.net/browse/PROJ-123`) — shown as a clickable link. Also accepts `Jira Epic` / `Jira Link` as column names |
 
 > **Note:** The `Serial Number` column supports Excel `=ROW()-1` style formulas — they are evaluated automatically on import.
 
