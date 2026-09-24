@@ -101,7 +101,7 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org) **v18 or higher** (required by Vite 8)
+- [Node.js](https://nodejs.org) **20.19+ or 22.13+** (required by Vite 8 and the jsdom test environment)
 
 ### Installation
 
@@ -282,7 +282,7 @@ No external state management or backend required.
 ### Build & Dev tooling
 | Tool | Purpose |
 |---|---|
-| **Vite 8** | Dev server and production bundler (requires Node ≥ 18) |
+| **Vite 8** | Dev server and production bundler (requires Node 20.19+ or 22.13+) |
 | **@vitejs/plugin-react** | JSX transform and React Fast Refresh |
 | **Vitest** | Unit and integration test runner |
 | **@testing-library/react** | React component test utilities |
