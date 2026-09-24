@@ -2,6 +2,8 @@
 
 ## Overview
 
+> **Experimental — off by default.** Enable it in **Settings → Experimental Features → Enable ⚡ Optimize** (you'll be asked to confirm it's used at your own risk). The choice is remembered per browser.
+
 The **⚡ Optimize** button redistributes tasks across team members to minimise the project end date. It respects Finish-to-Start dependencies, keeps each test task paired with the task it depends on, and uses the real scheduling engine (calendar dates, holidays, vacations) when comparing finish dates.
 
 ---
@@ -122,8 +124,8 @@ The makespan search tries every unit on Alice against Bob (and vice versa), pick
 
 | Button | Location | Action |
 |---|---|---|
-| ⚡ Optimize | Top bar | Runs the algorithm |
-| ↶ Undo Optimize | Top bar (appears after optimizing) | Restores previous assignments |
+| ⚡ Optimize | Top bar (only when enabled in Settings → Experimental Features) | Runs the algorithm |
+| ↶ Undo Optimize | Top bar (appears after optimizing; stays even if Optimize is later disabled) | Restores previous assignments |
 
 ---
 
