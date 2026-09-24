@@ -20,7 +20,9 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - **Fixed Start Date** — optional per-task constraint; the task will not start before the given date (set via Edit Task modal or imported from a `Fixed Start Date` column). Shown as a yellow left-edge stripe and a **FIX** badge on the bar. Non-fixed tasks automatically schedule around a fixed task's reserved slot on the same resource; if two fixed tasks still collide, a dismissible conflict banner appears at the top of the Gantt tab with one-click buttons to clear either task's fixed date
 - **Key Milestones** — flag any task as a key milestone via the ⭐ button on the task row or via the Edit Task modal. A dotted red vertical line crosses the entire chart at the task's end date, and a vertical label row above the bars shows each milestone's name. Hover the label for a tooltip with the full name
 - **Epic** — optional per-task Jira reference link (set via Add/Edit Task modal or imported from an `Epic` column). The ticket key (e.g. `ZENG-469932`) is shown as a clickable link directly on the Gantt bar, plus a 🔗 icon next to the task description and on Workload cards — click to open the Jira epic in a new tab
-- **Delete task** — click the `×` button on any row to remove a single task (confirmation required)
+- **+ Task** — toolbar button opens a step-by-step modal to add a new task
+- **Edit task** — right-click any task row → **Edit task…** to change description, category, days, complexity, status, dependencies, assignee, fixed start date, integration effort, or Epic (Serial Number is read-only)
+- **Delete task** — click the `×` button on any row, or right-click → **Delete task** (confirmation required)
 - **Delete all unassigned** — toolbar button removes every task with no assignee at once (visible only when unassigned tasks exist, confirmation required)
 
 ### 👥 Resource Management
@@ -34,7 +36,7 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Per-person cards showing task list, total days, and predicted finish date
 - Relative workload bar (green → yellow → red) for quick overload spotting
 - **Drag and drop** tasks between worker cards to reassign (completed tasks are locked)
-- **Right-click** any task for a context menu to set status, reassign, or delete the task
+- **Right-click** any task for a context menu to edit, set status, reassign, or delete the task
 - **Unassign all** button on each resource card — moves all of that person's tasks to Unassigned (confirmation required)
 - **Unassigned card** — a dedicated card lists all tasks with no assignee; drag a task from it to any resource card to assign, or drop any task onto it to unassign; includes a **Delete all** action to remove all unassigned tasks at once
 - Completed tasks show a **DONE** badge and cannot be dragged or reassigned
@@ -65,6 +67,8 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Toggle with the ☀️ / 🌙 button in the top bar or import screen
 
 ### 💾 Save & Restore Sessions
+- **New Project** — from the start screen, create a blank project, a named one, or load sample tasks, instead of importing a file
+- **Project name** — editable in the top bar or in Settings; saved in the session file and used as the default save filename (`<name> gantt.xlsx`)
 - **💾 Quick Save** — toolbar button available on every tab; writes directly back to the file you loaded or last saved without showing a dialog. On the very first save it opens a file picker and remembers the chosen path for all future Quick Saves. If the browser doesn't support the File System Access API it falls back to a triggered download
 - **⟳ Autosave** — toolbar toggle next to Quick Save. When on, the session is written to the same file about a second after every change (tasks, assignments, status, progress, fixed dates, milestones, resources, holidays, vacations, project start) — no dialogs. Turning it on before a file has been chosen opens the save picker once. The on/off preference is remembered in the browser. Available only in browsers with the File System Access API (Chrome, Edge); hidden elsewhere. If the browser hasn't granted write access (e.g. after dropping in a session file on a fresh page load), the button shows **Autosave paused** — click Quick Save once to grant access and autosave resumes
 - **Save Session (XLSX)** (Settings tab) — same output as Quick Save; also stores the file handle so Quick Save targets it afterwards
@@ -160,6 +164,7 @@ With **Autosave** on, this file is kept up to date automatically after every cha
 
 | Setting | Description |
 |---|---|
+| Project Name | Shown in the top bar and used as the default save filename |
 | Project Start Date | The earliest possible start date for any task |
 | Team Resources | Add, rename (✎) or remove (×) team members. Adding a new member triggers auto-rebalancing of unassigned tasks; renaming updates the name everywhere; removing moves their tasks to Unassigned |
 | Public Holidays | Dates skipped for all team members |
@@ -186,20 +191,22 @@ index.html                         # Vite entry point
 src/
 ├── App.jsx                        # UI, import/export, drag-and-drop, theme
 ├── App.test.jsx                   # Smoke tests for the import screen
-├── App.integration.test.jsx       # Integration tests for Gantt and Workload views
+├── App.integration.test.jsx       # Integration tests for Gantt, Workload, and Settings (resource rename/remove)
+├── App.fixedstart.test.jsx        # Integration tests for fixed start dates and conflict resolution
 ├── App.quicksave.test.jsx         # Integration tests for Quick Save and Autosave (file handle, picker, fallback, permissions)
 ├── index.jsx                      # React root mount
 ├── setupTests.js                  # Vitest global setup
 ├── components/
 │   ├── AddTaskModal.jsx           # Multi-step modal for creating a new task
+│   ├── EditTaskModal.jsx          # Single-page modal for editing an existing task
 │   ├── ConfirmDialog.jsx          # Reusable confirmation dialog for destructive actions
 │   └── ConfirmDialog.test.jsx     # Unit tests for ConfirmDialog
 └── utils/
-    ├── scheduleUtils.js           # Pure scheduling helpers + levelOptimize (shared with tests)
-    ├── taskMutations.js           # Pure helpers for task deletion and unassignment
+    ├── scheduleUtils.js           # Pure scheduling helpers, fixed-date collision detection, levelOptimize
+    ├── scheduleUtils.test.js      # Unit tests for scheduling, collisions, and levelOptimize
+    ├── taskMutations.js           # Pure helpers for task deletion/unassignment and resource rename/removal
     ├── taskMutations.test.js      # Unit tests for task mutation helpers
     ├── optimize.js                # Legacy greedy optimizer (kept for its test suite)
-    ├── levelOptimize.test.js      # Optimizer tests using the Objectstore workplan fixture
     ├── optimize.test.js           # Unit tests for the legacy optimizer
     └── optimize.bench.test.js     # Performance / scale tests
 vite.config.js                     # Vite build config
