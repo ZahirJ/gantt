@@ -349,6 +349,9 @@ export default function GanttApp() {
   const [autoSave, setAutoSave] = useState(() => {
     try { return localStorage.getItem("gantt.autoSave") === "1"; } catch { return false; }
   });
+  const [optimizeEnabled, setOptimizeEnabled] = useState(() => {
+    try { return localStorage.getItem("gantt.optimizeEnabled") === "1"; } catch { return false; }
+  });
   const [autoSaveState, setAutoSaveState] = useState(null); // null | 'saving' | 'saved' | 'needs-permission' | 'error'
   const [dataVersion, setDataVersion] = useState(0); // bumps on every data change; drives autosave debounce
   const dataVersionRef = useRef(0);
@@ -369,6 +372,20 @@ export default function GanttApp() {
   useEffect(() => {
     try { localStorage.setItem("gantt.autoSave", autoSave ? "1" : "0"); } catch {}
   }, [autoSave]);
+
+  useEffect(() => {
+    try { localStorage.setItem("gantt.optimizeEnabled", optimizeEnabled ? "1" : "0"); } catch {}
+  }, [optimizeEnabled]);
+
+  // Optimize is experimental and off by default; enabling requires confirming the risk.
+  function toggleOptimizeEnabled() {
+    if (optimizeEnabled) { setOptimizeEnabled(false); return; }
+    askConfirm(
+      "Optimize is experimental — use at your own risk. It can reassign many tasks at once. Enable it?",
+      () => setOptimizeEnabled(true),
+      "Enable",
+    );
+  }
 
   function askConfirm(message, onConfirm, confirmLabel = "Delete") {
     setConfirmDialog({ message, onConfirm, confirmLabel });
@@ -1156,7 +1173,7 @@ export default function GanttApp() {
         {rawTasks.some(t => !assignments[t["Serial Number"]]) && (
           <button onClick={() => askConfirm(`Delete all ${rawTasks.filter(t => !assignments[t["Serial Number"]]).length} unassigned task(s)?`, deleteAllUnassigned)} style={{ background: "none", border: `1px solid ${C.red}`, color: C.red, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Delete all tasks with no assignee">✕ Unassigned</button>
         )}
-        <button onClick={optimizeAndRedistributeTasks} style={{ background: C.accent, border: "none", color: "#fff", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Optimize: Redistribute Test & Development tasks to minimize end date">⚡ Optimize</button>
+        {optimizeEnabled && <button onClick={optimizeAndRedistributeTasks} style={{ background: C.accent, border: "none", color: "#fff", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Optimize (experimental): Redistribute Test & Development tasks to minimize end date">⚡ Optimize</button>}
         {undoHistory.length > 0 && (
           <button onClick={undoOptimization} style={{ background: C.yellow, border: "none", color: C.bg, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 600 }} title="Undo last optimization">↶ Undo</button>
         )}
@@ -2037,6 +2054,17 @@ export default function GanttApp() {
               <SBtn C={C} onClick={exportXLSX}>💾 Save Session (XLSX)</SBtn>
               <SBtn C={C} onClick={exportCSV}>Export CSV</SBtn>
               <SBtn C={C} onClick={() => window.print()}>Print / PDF</SBtn>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 40, borderTop: `1px solid ${C.border}`, paddingTop: 28, maxWidth: 820 }}>
+            <SLabel C={C}>EXPERIMENTAL FEATURES</SLabel>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: C.text, cursor: "pointer" }}>
+              <input type="checkbox" checked={optimizeEnabled} onChange={toggleOptimizeEnabled} />
+              Enable ⚡ Optimize
+            </label>
+            <div style={{ marginTop: 8, marginLeft: 24, padding: "8px 12px", borderLeft: `3px solid ${C.yellow}`, background: C.yellow + "18", color: C.text, fontSize: 12, lineHeight: 1.5 }}>
+              <strong>⚠ Experimental — use at your own risk.</strong> Optimize automatically reassigns tasks across resources to shorten the project end date. It may produce assignments that don't match your team's reality. Use <strong>↶ Undo</strong> to revert an optimization.
             </div>
           </div>
         </div>

@@ -240,13 +240,6 @@ describe('App Component', () => {
   });
 
   describe('Optimization Feature', () => {
-    test('optimize button is present in top bar when on gantt tab', () => {
-      render(<App />);
-      // Note: The optimize button appears on the main app screen, not import screen
-      // This test verifies the button exists in the DOM
-      expect(screen.getByText('Team Gantt')).toBeInTheDocument();
-    });
-
     test('renders app without errors after adding optimize feature', () => {
       expect(() => render(<App />)).not.toThrow();
     });

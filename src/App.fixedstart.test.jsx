@@ -11,14 +11,14 @@ async function loadCSV(csv, filename = "tasks.csv") {
   render(<App />);
   const file = new File([csv], filename, { type: "text/csv" });
   fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
-  await waitFor(() => expect(screen.getByTitle(/optimize/i)).toBeInTheDocument(), { timeout: 3000 });
+  await waitFor(() => expect(screen.getByTitle(/^quick save/i)).toBeInTheDocument(), { timeout: 3000 });
 }
 
 async function loadXLSX(buffer, filename = "tasks.xlsx") {
   render(<App />);
   const file = new File([buffer], filename, { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
-  await waitFor(() => expect(screen.getByTitle(/optimize/i)).toBeInTheDocument(), { timeout: 5000 });
+  await waitFor(() => expect(screen.getByTitle(/^quick save/i)).toBeInTheDocument(), { timeout: 5000 });
 }
 
 async function buildTaskXLSX(headers, dataRows) {
@@ -145,7 +145,7 @@ describe("Session XLSX: FIXED START DATES section", () => {
     render(<App />);
     const file = new File([buf], "session.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
-    await waitFor(() => expect(screen.getByTitle(/optimize/i)).toBeInTheDocument(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByTitle(/^quick save/i)).toBeInTheDocument(), { timeout: 5000 });
 
     fireEvent.click(screen.getByRole('button', { name: /workload/i }));
     await waitFor(() => expect(screen.getByTitle("Fixed start: 2026-06-15")).toBeInTheDocument(), { timeout: 3000 });
@@ -160,7 +160,7 @@ describe("Session XLSX: FIXED START DATES section", () => {
     render(<App />);
     const file = new File([buf], "old_session.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
-    await waitFor(() => expect(screen.getByTitle(/optimize/i)).toBeInTheDocument(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByTitle(/^quick save/i)).toBeInTheDocument(), { timeout: 5000 });
 
     // No FIX badges and no error
     fireEvent.click(screen.getByRole('button', { name: /workload/i }));
@@ -176,7 +176,7 @@ describe("Session XLSX: FIXED START DATES section", () => {
     render(<App />);
     const file = new File([buf], "session.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
-    await waitFor(() => expect(screen.getByTitle(/optimize/i)).toBeInTheDocument(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByTitle(/^quick save/i)).toBeInTheDocument(), { timeout: 5000 });
 
     fireEvent.click(screen.getByRole('button', { name: /workload/i }));
     expect(screen.queryByTitle(/Fixed start/)).not.toBeInTheDocument();
@@ -249,7 +249,7 @@ describe("Session XLSX: Epic column round-trip", () => {
     render(<App />);
     const file = new File([buf], "session.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     fireEvent.change(document.querySelector('input[type="file"]'), { target: { files: [file] } });
-    await waitFor(() => expect(screen.getByTitle(/optimize/i)).toBeInTheDocument(), { timeout: 5000 });
+    await waitFor(() => expect(screen.getByTitle(/^quick save/i)).toBeInTheDocument(), { timeout: 5000 });
 
     fireEvent.click(screen.getByRole('button', { name: /workload/i }));
     const link = await screen.findByTitle("Open Jira epic: https://example.atlassian.net/browse/PROJ-9");

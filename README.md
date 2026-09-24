@@ -49,10 +49,11 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Per-person vacation days
 - Tasks scheduled by Serial Number order when multiple are ready to start
 - Dependency-aware: a task won't start until all its dependencies are complete
-- Optimization minimizes total project duration
+- Optimization (experimental, off by default) minimizes total project duration
 - Optimization avoids resource idle gaps (contiguous work per resource)
 
-### ⚡ Optimization
+### ⚡ Optimization (experimental)
+- **Off by default.** Enable it in **Settings → Experimental Features** — a confirmation warns that it is *experimental, use at your own risk*. The choice is remembered in this browser. Turning it off hides the button without a prompt; ↶ Undo stays available for an optimization you already ran
 - The Optimize button redistributes tasks to balance workload and shorten the overall project finish date
 - Tasks are grouped into **units** (a non-test task + all test tasks that depend on it) and always move together
 - Units are allocated in **priority order**: tasks with no dependencies first, then tasks that the most other tasks depend on — critical-path work starts as early as possible
@@ -169,6 +170,7 @@ With **Autosave** on, this file is kept up to date automatically after every cha
 | Team Resources | Add, rename (✎) or remove (×) team members. Adding a new member triggers auto-rebalancing of unassigned tasks; renaming updates the name everywhere; removing moves their tasks to Unassigned |
 | Public Holidays | Dates skipped for all team members |
 | Vacation Days | Per-person dates to skip during scheduling |
+| Experimental Features | **Enable ⚡ Optimize** — off by default; enabling asks you to confirm it is experimental and used at your own risk. Remembered per browser |
 
 ---
 

@@ -3,7 +3,7 @@ import App from './App';
 
 // ── CSV loading helper ────────────────────────────────────────────────────────
 // Builds a minimal CSV File and fires it through the hidden file input,
-// then waits until the app leaves the import screen (Optimize button visible).
+// then waits until the app leaves the import screen (Quick Save button visible).
 
 const CSV_HEADER = "Serial Number,Category,Description,Depends On,Status,Complexity,Days,Assignee,Integration Effort";
 
@@ -20,7 +20,7 @@ async function loadTasks(rows) {
   const file = new File([csv], "tasks.csv", { type: "text/csv" });
   const input = document.querySelector('input[type="file"]');
   fireEvent.change(input, { target: { files: [file] } });
-  await waitFor(() => expect(screen.getByTitle(/optimize/i)).toBeInTheDocument(), { timeout: 3000 });
+  await waitFor(() => expect(screen.getByTitle(/^quick save/i)).toBeInTheDocument(), { timeout: 3000 });
 }
 
 const TASKS_MIXED = [
@@ -315,5 +315,99 @@ describe('Settings — remove resource', () => {
     await removeViaSettings("Alice", false);
     expect(screen.getByText("Alice")).toBeInTheDocument();
     expect(screen.queryByText("Unassigned")).not.toBeInTheDocument();
+  });
+});
+
+// ── Settings — experimental Optimize toggle ───────────────────────────────────
+
+describe('Settings — experimental Optimize toggle', () => {
+  // Node's test env has no usable localStorage, so give each test a fresh in-memory one
+  let store;
+  beforeEach(() => {
+    store = {};
+    vi.stubGlobal('localStorage', {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: (k) => { delete store[k]; },
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  async function goToSettings() {
+    await loadTasks(TASKS_MIXED);
+    fireEvent.click(screen.getByRole("button", { name: /settings/i }));
+  }
+  const optimizeBtn = () => screen.queryByRole("button", { name: /⚡ optimize/i });
+  const toggle = () => screen.getByRole("checkbox", { name: /enable ⚡ optimize/i });
+
+  test('Optimize is hidden by default', async () => {
+    await loadTasks(TASKS_MIXED);
+    expect(optimizeBtn()).not.toBeInTheDocument();
+  });
+
+  test('Settings shows the experimental risk notice', async () => {
+    await goToSettings();
+    expect(toggle()).not.toBeChecked();
+    expect(screen.getByText(/experimental — use at your own risk\./i)).toBeInTheDocument();
+  });
+
+  test('enabling asks for confirmation, then shows the Optimize button', async () => {
+    await goToSettings();
+    fireEvent.click(toggle());
+    expect(screen.getByText(/optimize is experimental — use at your own risk/i)).toBeInTheDocument();
+    expect(optimizeBtn()).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+    expect(toggle()).toBeChecked();
+    expect(optimizeBtn()).toBeInTheDocument();
+  });
+
+  test('cancelling the confirmation keeps Optimize disabled', async () => {
+    await goToSettings();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(toggle()).not.toBeChecked();
+    expect(optimizeBtn()).not.toBeInTheDocument();
+  });
+
+  test('disabling hides Optimize without a confirmation but keeps Undo available', async () => {
+    await goToSettings();
+    fireEvent.click(toggle());
+    fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+    fireEvent.click(optimizeBtn());
+    expect(screen.getByRole("button", { name: /undo/i })).toBeInTheDocument();
+    fireEvent.click(toggle());
+    expect(toggle()).not.toBeChecked();
+    expect(optimizeBtn()).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /undo/i })).toBeInTheDocument();
+  });
+});
+
+describe('Settings — experimental Optimize toggle persistence', () => {
+  let store;
+  beforeEach(() => {
+    store = {};
+    vi.stubGlobal('localStorage', {
+      getItem: (k) => (k in store ? store[k] : null),
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: (k) => { delete store[k]; },
+    });
+  });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  test('a previously enabled setting shows Optimize on first render', async () => {
+    store['gantt.optimizeEnabled'] = '1';
+    await loadTasks(TASKS_MIXED);
+    expect(screen.getByRole("button", { name: /⚡ optimize/i })).toBeInTheDocument();
+  });
+
+  test('enabling and disabling are saved to localStorage', async () => {
+    await loadTasks(TASKS_MIXED);
+    expect(store['gantt.optimizeEnabled']).toBe('0');
+    fireEvent.click(screen.getByRole("button", { name: /settings/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /enable ⚡ optimize/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+    expect(store['gantt.optimizeEnabled']).toBe('1');
+    fireEvent.click(screen.getByRole("checkbox", { name: /enable ⚡ optimize/i }));
+    expect(store['gantt.optimizeEnabled']).toBe('0');
   });
 });
