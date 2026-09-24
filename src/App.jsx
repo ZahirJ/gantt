@@ -345,13 +345,29 @@ export default function GanttApp() {
   const [namePrompt, setNamePrompt] = useState(null); // null | { onSave: (name) => void }
   const [newProjectName, setNewProjectName] = useState(""); // controlled input for named new project
   const skipDirtyRef = useRef(true); // true during load/new-project batch to suppress dirty flag
+  const [autoSave, setAutoSave] = useState(() => {
+    try { return localStorage.getItem("gantt.autoSave") === "1"; } catch { return false; }
+  });
+  const [autoSaveState, setAutoSaveState] = useState(null); // null | 'saving' | 'saved' | 'needs-permission' | 'error'
+  const [dataVersion, setDataVersion] = useState(0); // bumps on every data change; drives autosave debounce
+  const dataVersionRef = useRef(0);
+  const autoSaveInFlightRef = useRef(false);
+  const autoSavePendingRef = useRef(false);
 
   // Mark dirty whenever project data changes, but not during load/new-project batches
   useEffect(() => {
     if (skipDirtyRef.current) { skipDirtyRef.current = false; return; }
-    if (screen === "gantt") setIsDirty(true);
+    if (screen === "gantt") {
+      setIsDirty(true);
+      dataVersionRef.current += 1;
+      setDataVersion(dataVersionRef.current);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawTasks, assignments, progress, taskStatuses, fixedStartDates, milestones, resources, holidays, vacMap, projectStart]);
+
+  useEffect(() => {
+    try { localStorage.setItem("gantt.autoSave", autoSave ? "1" : "0"); } catch {}
+  }, [autoSave]);
 
   function askConfirm(message, onConfirm, confirmLabel = "Delete") {
     setConfirmDialog({ message, onConfirm, confirmLabel });
@@ -841,7 +857,7 @@ export default function GanttApp() {
             (await sessionFileHandle.requestPermission({ mode: "readwrite" })) === "granted";
           if (granted) {
             await writeToHandle(sessionFileHandle, blob);
-            setSaveStatus("saved"); setIsDirty(false);
+            setSaveStatus("saved"); setIsDirty(false); setAutoSaveState(null);
             setTimeout(() => setSaveStatus(null), 2000);
             return;
           }
@@ -858,7 +874,7 @@ export default function GanttApp() {
           setSessionFileHandle(handle);
           setSessionFileName(handle.name);
           await writeToHandle(handle, blob);
-          setSaveStatus("saved"); setIsDirty(false);
+          setSaveStatus("saved"); setIsDirty(false); setAutoSaveState(null);
           setTimeout(() => setSaveStatus(null), 2000);
         } catch (e) {
           if (e.name !== "AbortError") throw e;
@@ -871,12 +887,57 @@ export default function GanttApp() {
         a.download = sessionFileName;
         a.click();
         URL.revokeObjectURL(a.href);
-        setSaveStatus("saved"); setIsDirty(false);
+        setSaveStatus("saved"); setIsDirty(false); setAutoSaveState(null);
         setTimeout(() => setSaveStatus(null), 2000);
       }
     } catch {
       setSaveStatus(null);
     }
+  }
+
+  // Silent background save to the stored file handle. Never opens a picker or
+  // requests permission (both need a user gesture) — if access isn't granted,
+  // it flags 'needs-permission' so the user can click Quick Save once.
+  async function autoSaveNow() {
+    if (!sessionFileHandle) return;
+    if (autoSaveInFlightRef.current) { autoSavePendingRef.current = true; return; }
+    autoSaveInFlightRef.current = true;
+    const version = dataVersionRef.current;
+    try {
+      const perm = await sessionFileHandle.queryPermission({ mode: "readwrite" });
+      if (perm !== "granted") { setAutoSaveState("needs-permission"); return; }
+      setAutoSaveState("saving");
+      const blob = await buildSessionBlob();
+      await writeToHandle(sessionFileHandle, blob);
+      // Only clear dirty if nothing changed while we were writing
+      if (dataVersionRef.current === version) setIsDirty(false);
+      setAutoSaveState("saved");
+    } catch {
+      setAutoSaveState("error");
+    } finally {
+      autoSaveInFlightRef.current = false;
+      if (autoSavePendingRef.current) {
+        autoSavePendingRef.current = false;
+        autoSaveRef.current();
+      }
+    }
+  }
+  const autoSaveRef = useRef(autoSaveNow);
+  autoSaveRef.current = autoSaveNow; // always call the latest closure (fresh state for buildSessionBlob)
+
+  // Debounced autosave after every data change
+  useEffect(() => {
+    if (!autoSave || !isDirty || !sessionFileHandle) return;
+    const t = setTimeout(() => autoSaveRef.current(), 800);
+    return () => clearTimeout(t);
+  }, [autoSave, isDirty, dataVersion, sessionFileHandle]);
+
+  function toggleAutoSave() {
+    const next = !autoSave;
+    setAutoSave(next);
+    setAutoSaveState(null);
+    // Enabling without a file yet → pick one now (this click is the required user gesture)
+    if (next && (!sessionFileHandle || isDirty)) quickSave();
   }
 
   async function exportXLSX() {
@@ -1073,6 +1134,25 @@ export default function GanttApp() {
           {saveStatus === "saving" ? "💾 Saving…" : saveStatus === "saved" ? "✓ Saved" : "💾 Quick Save"}
           {isDirty && !saveStatus && <span style={{ color: C.yellow, fontSize: 8, lineHeight: 1 }}>●</span>}
         </button>
+        {window.showSaveFilePicker && (() => {
+          const warn = autoSave && (autoSaveState === "needs-permission" || autoSaveState === "error");
+          const color = !autoSave ? C.muted : warn ? C.yellow : C.green;
+          const label = !autoSave ? "Autosave off"
+            : autoSaveState === "saving" ? "Autosaving…"
+            : autoSaveState === "needs-permission" ? "Autosave paused"
+            : autoSaveState === "error" ? "Autosave failed"
+            : "Autosave on";
+          const title = !autoSave ? "Turn on to save automatically after every change"
+            : autoSaveState === "needs-permission" ? "Browser needs write permission — click 💾 Save once to resume autosave"
+            : autoSaveState === "error" ? "Last autosave failed — click 💾 Save to retry"
+            : sessionFileHandle ? `Autosaving to ${sessionFileName} — click to turn off` : "Autosave on — choose a file with 💾 Save";
+          return (
+            <button onClick={toggleAutoSave} title={title} aria-pressed={autoSave}
+              style={{ background: "none", border: `1px solid ${autoSave ? color : C.border}`, color, borderRadius: 6, padding: "4px 10px", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>
+              {autoSave ? "⟳ " : ""}{label}
+            </button>
+          );
+        })()}
         <button onClick={safeNavigateToImport} style={{ background: "none", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11 }}>↑ Import</button>
       </div>
 
