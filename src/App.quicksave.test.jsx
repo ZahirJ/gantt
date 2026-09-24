@@ -276,3 +276,56 @@ describe('File name tracking across saves', () => {
     // This verifies name tracking is stable across multiple saves
   });
 });
+
+// ── Autosave ──────────────────────────────────────────────────────────────────
+
+describe('Autosave', () => {
+  afterEach(() => { try { localStorage.removeItem('gantt.autoSave'); } catch {} });
+
+  function changeStatus() {
+    fireEvent.change(screen.getAllByDisplayValue('Open')[0], { target: { value: 'In Progress' } });
+  }
+
+  test('toggle is hidden when File System Access API is unavailable', async () => {
+    await loadTasks();
+    expect(screen.queryByRole('button', { name: /autosave/i })).not.toBeInTheDocument();
+  });
+
+  test('turning on without a file opens the picker, then saves after each change', async () => {
+    const handle = makeHandle('auto.xlsx');
+    window.showSaveFilePicker = vi.fn().mockResolvedValue(handle);
+    await loadTasks();
+    fireEvent.click(screen.getByRole('button', { name: /autosave off/i }));
+    await waitFor(() => expect(handle.createWritable).toHaveBeenCalledTimes(1));
+    expect(window.showSaveFilePicker).toHaveBeenCalledTimes(1);
+
+    changeStatus();
+    await waitFor(() => expect(handle.createWritable).toHaveBeenCalledTimes(2), { timeout: 2000 });
+    expect(window.showSaveFilePicker).toHaveBeenCalledTimes(1); // no new picker
+  });
+
+  test('pauses without prompting when write permission is not granted', async () => {
+    const handle = makeHandle('auto.xlsx');
+    window.showSaveFilePicker = vi.fn().mockResolvedValue(handle);
+    await loadTasks();
+    fireEvent.click(screen.getByRole('button', { name: /autosave off/i }));
+    await waitFor(() => expect(handle.createWritable).toHaveBeenCalledTimes(1));
+
+    handle.queryPermission.mockResolvedValue('prompt');
+    changeStatus();
+    await waitFor(() => expect(screen.getByRole('button', { name: /autosave paused/i })).toBeInTheDocument(), { timeout: 2000 });
+    expect(handle.requestPermission).not.toHaveBeenCalled();
+    expect(handle.createWritable).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not save on change when turned off', async () => {
+    const handle = makeHandle('auto.xlsx');
+    window.showSaveFilePicker = vi.fn().mockResolvedValue(handle);
+    await loadTasks();
+    fireEvent.click(screen.getByRole('button', { name: /quick save/i }));
+    await waitFor(() => expect(handle.createWritable).toHaveBeenCalledTimes(1));
+    changeStatus();
+    await act(async () => { await new Promise(r => setTimeout(r, 1200)); });
+    expect(handle.createWritable).toHaveBeenCalledTimes(1);
+  });
+});
