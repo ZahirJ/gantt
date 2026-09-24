@@ -64,6 +64,7 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 
 ### 💾 Save & Restore Sessions
 - **💾 Quick Save** — toolbar button available on every tab; writes directly back to the file you loaded or last saved without showing a dialog. On the very first save it opens a file picker and remembers the chosen path for all future Quick Saves. If the browser doesn't support the File System Access API it falls back to a triggered download
+- **⟳ Autosave** — toolbar toggle next to Quick Save. When on, the session is written to the same file about a second after every change (tasks, assignments, status, progress, fixed dates, milestones, resources, holidays, vacations, project start) — no dialogs. Turning it on before a file has been chosen opens the save picker once. The on/off preference is remembered in the browser. Available only in browsers with the File System Access API (Chrome, Edge); hidden elsewhere. If the browser hasn't granted write access (e.g. after dropping in a session file on a fresh page load), the button shows **Autosave paused** — click Quick Save once to grant access and autosave resumes
 - **Save Session (XLSX)** (Settings tab) — same output as Quick Save; also stores the file handle so Quick Save targets it afterwards
 - Restoring is as simple as re-importing the saved file — all assignments, progress, holidays, vacations, and resources are fully recovered
 - No database or account required
@@ -147,6 +148,8 @@ If the `Days` column is empty, the app falls back to the `Complexity` column usi
 | `Session` | Project start, theme, resources, holidays, vacation days, assignments, progress, task statuses, fixed start dates, milestones |
 | `Workload` | Per-person summary: tasks, total days, finish date |
 
+With **Autosave** on, this file is kept up to date automatically after every change.
+
 **Restoring:** Drop the session file onto the import screen. The app automatically detects the Session sheet and restores your full state.
 
 ---
@@ -167,6 +170,7 @@ If the `Days` column is empty, the app falls back to the `Complexity` column usi
 | Option | Description |
 |---|---|
 | 💾 Quick Save | Toolbar button on every tab — saves directly to the previously used file (no dialog). Shows a picker on first use and remembers the path. Falls back to a download if the File System Access API is unavailable |
+| ⟳ Autosave | Toolbar toggle — saves to the current session file automatically after every change. Chrome/Edge only; shows *paused* until write permission is granted via Quick Save |
 | 💾 Save Session (XLSX) | Full session snapshot (Settings tab) — opens a save dialog; also registers the file for Quick Save |
 | Export CSV | Scheduled task list with dates — for use in other tools |
 | Print / PDF | Prints the current view via the browser print dialog |
@@ -181,7 +185,7 @@ src/
 ├── App.jsx                        # UI, import/export, drag-and-drop, theme
 ├── App.test.jsx                   # Smoke tests for the import screen
 ├── App.integration.test.jsx       # Integration tests for Gantt and Workload views
-├── App.quicksave.test.jsx         # Integration tests for Quick Save (file handle, picker, fallback)
+├── App.quicksave.test.jsx         # Integration tests for Quick Save and Autosave (file handle, picker, fallback, permissions)
 ├── index.jsx                      # React root mount
 ├── setupTests.js                  # Vitest global setup
 ├── components/
@@ -230,7 +234,7 @@ No CSS framework, no external component library, no backend.
 
 - Dependency type is Finish-to-Start only (Start-to-Start and Finish-to-Finish not yet supported)
 - Progress sliders in the Gantt view show the first 18 tasks only — scroll the Workload tab to see all
-- Undo is available for the Optimize action only; general undo/redo is not yet supported — use Save Session frequently to preserve checkpoints
+- Undo is available for the Optimize action only; general undo/redo is not yet supported — turn on Autosave or use Save Session frequently to preserve checkpoints (autosave overwrites the same file, so save a copy under a new name if you want a restorable checkpoint)
 - Print/PDF exports the current browser view; for best results use the Gantt tab at month zoom
 
 ---
