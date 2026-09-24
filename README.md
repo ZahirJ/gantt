@@ -26,6 +26,8 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 ### 👥 Resource Management
 - Assign tasks to team members via dropdown in the Gantt view
 - Add new resources in Settings — unassigned tasks auto-distribute using a load-balancing algorithm (fewest days first)
+- **Rename** a resource with the ✎ button on its chip in Settings (Enter to save, Esc to cancel) — the new name is applied everywhere: task assignments, vacation days, workload cards, exports, and Optimize undo history. Renaming to a name that already exists (case-insensitive) is blocked
+- **Remove** a resource with × in Settings (confirmation required) — their tasks move to the Unassigned card and their vacation days are deleted
 - Each person works on one task at a time (no parallel splitting)
 
 ### 📋 Workload Tab
@@ -159,7 +161,7 @@ With **Autosave** on, this file is kept up to date automatically after every cha
 | Setting | Description |
 |---|---|
 | Project Start Date | The earliest possible start date for any task |
-| Team Resources | Add or remove team members. Adding a new member triggers auto-rebalancing of unassigned tasks |
+| Team Resources | Add, rename (✎) or remove (×) team members. Adding a new member triggers auto-rebalancing of unassigned tasks; renaming updates the name everywhere; removing moves their tasks to Unassigned |
 | Public Holidays | Dates skipped for all team members |
 | Vacation Days | Per-person dates to skip during scheduling |
 

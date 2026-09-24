@@ -233,3 +233,87 @@ describe('Workload view — context menu delete', () => {
     await waitFor(() => expect(screen.queryByText("Build auth")).not.toBeInTheDocument());
   });
 });
+
+// ── Settings — rename resource ────────────────────────────────────────────────
+
+describe('Settings — rename resource', () => {
+  async function goToSettings() {
+    await loadTasks(TASKS_ALL_ASSIGNED);
+    fireEvent.click(screen.getByRole("button", { name: /settings/i }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument());
+  }
+
+  function rename(from, to) {
+    fireEvent.click(screen.getByRole("button", { name: `Rename ${from}` }));
+    const input = screen.getByRole("textbox", { name: `Rename ${from}` });
+    fireEvent.change(input, { target: { value: to } });
+    fireEvent.keyDown(input, { key: "Enter" });
+  }
+
+  test('renamed resource shows its tasks under the new name in Workload', async () => {
+    await goToSettings();
+    rename("Alice", "Carol");
+    fireEvent.click(screen.getByRole("button", { name: /workload/i }));
+    await waitFor(() => expect(screen.getByText("Resource Workload")).toBeInTheDocument());
+    expect(screen.queryByText("Alice")).not.toBeInTheDocument();
+    expect(screen.getByText("Carol")).toBeInTheDocument();
+    expect(screen.getByText("Task Alpha")).toBeInTheDocument();
+    expect(screen.queryByText("Unassigned")).not.toBeInTheDocument();
+  });
+
+  test('renaming to an existing name is blocked with an error', async () => {
+    await goToSettings();
+    rename("Alice", "bob");
+    expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
+    expect(screen.getByRole("textbox", { name: "Rename Alice" })).toBeInTheDocument();
+  });
+
+  test('Escape cancels the rename', async () => {
+    await goToSettings();
+    fireEvent.click(screen.getByRole("button", { name: "Rename Alice" }));
+    const input = screen.getByRole("textbox", { name: "Rename Alice" });
+    fireEvent.change(input, { target: { value: "Carol" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(screen.queryByRole("textbox", { name: "Rename Alice" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Carol")).not.toBeInTheDocument();
+  });
+});
+
+describe('Settings — rename resource (case-only)', () => {
+  test('changing only the case of a name is allowed', async () => {
+    await loadTasks(TASKS_ALL_ASSIGNED);
+    fireEvent.click(screen.getByRole("button", { name: /settings/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Rename Alice" }));
+    const input = screen.getByRole("textbox", { name: "Rename Alice" });
+    fireEvent.change(input, { target: { value: "ALICE" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rename ALICE" })).toBeInTheDocument();
+  });
+});
+
+describe('Settings — remove resource', () => {
+  async function removeViaSettings(name, confirm = true) {
+    await loadTasks(TASKS_ALL_ASSIGNED);
+    fireEvent.click(screen.getByRole("button", { name: /settings/i }));
+    const chip = screen.getByRole("button", { name: `Rename ${name}` }).parentElement;
+    fireEvent.click(within(chip).getByRole("button", { name: "×" }));
+    expect(screen.getByText(/Remove Alice\? 2 tasks will move to Unassigned/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: confirm ? "Remove" : /cancel/i }));
+    fireEvent.click(screen.getByRole("button", { name: /workload/i }));
+    await waitFor(() => expect(screen.getByText("Resource Workload")).toBeInTheDocument());
+  }
+
+  test("asks for confirmation, then moves the removed person's tasks to Unassigned", async () => {
+    await removeViaSettings("Alice");
+    expect(screen.getByText("Unassigned")).toBeInTheDocument();
+    expect(screen.getByText("2 tasks")).toBeInTheDocument();
+    expect(screen.getByText("Task Alpha")).toBeInTheDocument();
+  });
+
+  test('cancelling keeps the resource and its tasks', async () => {
+    await removeViaSettings("Alice", false);
+    expect(screen.getByText("Alice")).toBeInTheDocument();
+    expect(screen.queryByText("Unassigned")).not.toBeInTheDocument();
+  });
+});
