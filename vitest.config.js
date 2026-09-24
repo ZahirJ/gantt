@@ -13,10 +13,5 @@ export default defineConfig({
     environmentOptions: {
       jsdom: { url: 'http://localhost' },
     },
-    // Node.js test files use XLSX.readFile (fs API) — must run in node environment
-    environmentMatchGlobs: [
-      ['src/utils/levelOptimize.test.js', 'node'],
-      ['src/utils/optimize*.test.js', 'node'],
-    ],
   },
 });
