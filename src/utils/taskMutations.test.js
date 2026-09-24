@@ -1,4 +1,4 @@
-import { applyDeleteTask, applyDeleteAllUnassigned, applyUnassignAllForPerson } from './taskMutations';
+import { applyDeleteTask, applyDeleteAllUnassigned, applyUnassignAllForPerson, applyRenameResource, validateResourceRename, applyRemoveResource } from './taskMutations';
 
 const TASK_A = { "Serial Number": "1", "Description": "Task A", "Days": 3 };
 const TASK_B = { "Serial Number": "2", "Description": "Task B", "Days": 2 };
@@ -136,5 +136,116 @@ describe('applyUnassignAllForPerson', () => {
   test('empty assignments returns empty object', () => {
     const result = applyUnassignAllForPerson("Alice", {});
     expect(result).toEqual({});
+  });
+});
+
+// ── validateResourceRename ─────────────────────────────────────────────────────
+
+describe('validateResourceRename', () => {
+  const resources = ["Alice", "Bob"];
+
+  test('accepts a new unique name', () => {
+    expect(validateResourceRename("Alice", "Carol", resources)).toBeNull();
+  });
+
+  test('rejects an empty or whitespace-only name', () => {
+    expect(validateResourceRename("Alice", "   ", resources)).toMatch(/empty/i);
+  });
+
+  test('rejects a name that clashes with another resource, ignoring case and spaces', () => {
+    expect(validateResourceRename("Alice", " bob ", resources)).toMatch(/already exists/i);
+  });
+
+  test("allows changing only the case of the resource's own name", () => {
+    expect(validateResourceRename("Alice", "ALICE", resources)).toBeNull();
+  });
+});
+
+// ── applyRenameResource ────────────────────────────────────────────────────────
+
+describe('applyRenameResource', () => {
+  function renameState() {
+    return {
+      resources: ["Alice", "Bob"],
+      assignments: { "1": "Alice", "2": "Bob", "3": "Alice" },
+      vacMap: { Alice: ["2026-10-01"], Bob: ["2026-10-02"] },
+      rawTasks: [{ ...TASK_A, "Assignee": "Alice" }, { ...TASK_B, "Assignee": "Bob" }, TASK_C],
+      undoHistory: [{ assignments: { "1": "Bob", "2": "Alice" } }],
+    };
+  }
+
+  test('renames in the resources list, keeping order', () => {
+    expect(applyRenameResource("Alice", "Carol", renameState()).resources).toEqual(["Carol", "Bob"]);
+  });
+
+  test('moves every assignment to the new name', () => {
+    expect(applyRenameResource("Alice", "Carol", renameState()).assignments).toEqual({ "1": "Carol", "2": "Bob", "3": "Carol" });
+  });
+
+  test('moves vacation days to the new name', () => {
+    expect(applyRenameResource("Alice", "Carol", renameState()).vacMap).toEqual({ Carol: ["2026-10-01"], Bob: ["2026-10-02"] });
+  });
+
+  test("updates each task's imported Assignee field", () => {
+    const { rawTasks } = applyRenameResource("Alice", "Carol", renameState());
+    expect(rawTasks.map(t => t["Assignee"])).toEqual(["Carol", "Bob", undefined]);
+  });
+
+  test('renames inside optimizer undo snapshots so Undo restores the new name', () => {
+    expect(applyRenameResource("Alice", "Carol", renameState()).undoHistory).toEqual([{ assignments: { "1": "Bob", "2": "Carol" } }]);
+  });
+
+  test('a leftover vacation entry under the new name does not overwrite the renamed resource', () => {
+    const state = { ...renameState(), vacMap: { Alice: ["2026-10-01"], Carol: ["2025-01-01"] } };
+    expect(applyRenameResource("Alice", "Carol", state).vacMap).toEqual({ Carol: ["2026-10-01"] });
+  });
+
+  test('does not mutate the input state', () => {
+    const state = renameState();
+    const snapshot = JSON.parse(JSON.stringify(state));
+    applyRenameResource("Alice", "Carol", state);
+    expect(state).toEqual(snapshot);
+  });
+});
+
+// ── applyRemoveResource ────────────────────────────────────────────────────────
+
+describe('applyRemoveResource', () => {
+  function removeState() {
+    return {
+      resources: ["Alice", "Bob"],
+      assignments: { "1": "Alice", "2": "Bob", "3": "Alice" },
+      vacMap: { Alice: ["2026-10-01"], Bob: ["2026-10-02"] },
+      rawTasks: [{ ...TASK_A, "Assignee": "Alice" }, { ...TASK_B, "Assignee": "Bob" }, TASK_C],
+      undoHistory: [{ assignments: { "1": "Bob", "2": "Alice" } }],
+    };
+  }
+
+  test('removes the resource from the list', () => {
+    expect(applyRemoveResource("Alice", removeState()).resources).toEqual(["Bob"]);
+  });
+
+  test("unassigns the removed resource's tasks", () => {
+    expect(applyRemoveResource("Alice", removeState()).assignments).toEqual({ "2": "Bob" });
+  });
+
+  test('deletes their vacation days', () => {
+    expect(applyRemoveResource("Alice", removeState()).vacMap).toEqual({ Bob: ["2026-10-02"] });
+  });
+
+  test("clears the imported Assignee field on their tasks", () => {
+    const { rawTasks } = applyRemoveResource("Alice", removeState());
+    expect(rawTasks.map(t => t["Assignee"])).toEqual(["", "Bob", undefined]);
+  });
+
+  test('unassigns them inside optimizer undo snapshots', () => {
+    expect(applyRemoveResource("Alice", removeState()).undoHistory).toEqual([{ assignments: { "1": "Bob" } }]);
+  });
+
+  test('does not mutate the input state', () => {
+    const state = removeState();
+    const snapshot = JSON.parse(JSON.stringify(state));
+    applyRemoveResource("Alice", state);
+    expect(state).toEqual(snapshot);
   });
 });

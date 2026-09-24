@@ -19,7 +19,7 @@ This is a single-page React app with **no backend, no routing, and no external s
 
 - `src/App.jsx` — all UI, import/export, drag-and-drop, and theme logic
 - `src/utils/scheduleUtils.js` — pure scheduling helpers (`fmtDate`, `scheduleTasks`, `isWorkday`, etc.), `detectFixedCollisions` (fixed-start-date conflict detection), and the `levelOptimize` function; imported by both App.jsx and tests
-- `src/utils/taskMutations.js` — pure helpers for task deletion and unassignment (`applyDeleteTask`, `applyDeleteAllUnassigned`, `applyUnassignAllForPerson`); take plain state objects and return new state objects without side effects
+- `src/utils/taskMutations.js` — pure helpers for task deletion, unassignment, and resource rename/removal (`applyDeleteTask`, `applyDeleteAllUnassigned`, `applyUnassignAllForPerson`, `validateResourceRename`, `applyRenameResource`, `applyRemoveResource`); take plain state objects and return new state objects without side effects
 - `src/utils/optimize.js` — legacy standalone optimizer (greedy local-search); kept for its test suite
 - `src/components/AddTaskModal.jsx` — multi-step modal for creating a new task
 - `src/components/EditTaskModal.jsx` — single-page modal for editing an existing task; accepts `task`, `fixedStartDate`, `resources`, `rawTasks`, `categories`, `C`, `onSubmit(sn, draft)`, `onClose` props; Serial Number is read-only
@@ -129,6 +129,13 @@ Entry points:
 **Gantt** (`ganttContextMenu`): triggered by `onContextMenu` on each label-column row. Shows "Edit task…" and "Delete task". Dismissed by clicking anywhere in the Gantt tab div.
 
 **Workload** (`contextMenu`): existing menu; now includes "Edit task…" as the first item above the STATUS section. Dismissed by clicking anywhere in the Workload tab div.
+
+### Resource rename & removal (Settings tab)
+
+A resource name is stored in five places: `resources`, `assignments` values, `vacMap` keys, `rawTasks[].Assignee`, and `undoHistory[].assignments`. Any operation that changes a name must update all five — use `applyRenameResource` / `applyRemoveResource` rather than touching `resources` alone.
+
+- **Rename**: ✎ on a chip sets `renamingResource` (`null | { from, value, error }`) and swaps the chip for an inline input. `commitRenameResource()` validates via `validateResourceRename` (non-empty; no case-insensitive clash with another resource; case-only change of its own name allowed) and shows the error inline. Switching tabs cancels an open rename.
+- **Remove**: × calls `confirmRemoveResource(name)` → `askConfirm(..., "Remove")` → `removeResource(name)`, which unassigns the person's tasks (they appear on the Unassigned card), deletes their vacation days, and strips them from undo snapshots.
 
 ### Tabs
 
