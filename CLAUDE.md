@@ -11,6 +11,7 @@ npm test           # Run all tests once (Vitest, CI mode)
 npm run test:watch # Run tests in watch mode
 npm test -- scheduleUtils   # Run a specific test file (partial name match)
 npm run build      # Production build
+npm run screenshots # Regenerate README screenshots + examples/demo-project.xlsx (Playwright, uses installed Google Chrome)
 ```
 
 ## Architecture
