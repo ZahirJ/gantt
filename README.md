@@ -2,6 +2,8 @@
 
 A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet, assign work to team members, and get an instant visual schedule with predicted finish dates — respecting working days, public holidays, and personal vacation time.
 
+![Gantt chart of the demo project: task list on the left, bars with dependency arrows, milestone lines, and today marker](docs/screenshots/gantt.png)
+
 ---
 
 ## Features
@@ -25,6 +27,17 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - **Delete task** — click the `×` button on any row, or right-click → **Delete task** (confirmation required)
 - **Delete all unassigned** — toolbar button removes every task with no assignee at once (visible only when unassigned tasks exist, confirmation required)
 
+<table>
+  <tr>
+    <td width="60%"><img src="docs/screenshots/bar-badges.png" alt="Close-up of Gantt bars: milestone stars and red dotted milestone lines, a fixed-date bar with a yellow edge and FIX badge, and Jira Epic links"></td>
+    <td width="40%"><img src="docs/screenshots/fixed-conflict.png" alt="Red fixed date conflict banner with buttons to clear either task's fixed date"></td>
+  </tr>
+  <tr>
+    <td><sub>Milestones (⭐ and dotted red lines), a fixed start date (<b>FIX</b>, yellow edge) and Epic links on the bars</sub></td>
+    <td><sub>Conflict banner when two fixed-date tasks overlap on the same person</sub></td>
+  </tr>
+</table>
+
 ### 👥 Resource Management
 - Assign tasks to team members via dropdown in the Gantt view
 - Add new resources in Settings — unassigned tasks auto-distribute using a load-balancing algorithm (fewest days first)
@@ -33,6 +46,9 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Each person works on one task at a time (no parallel splitting)
 
 ### 📋 Workload Tab
+
+![Workload tab: one card per person with tasks, total days, finish date and load bar, plus a dashed Unassigned card](docs/screenshots/workload.png)
+
 - Per-person cards showing task list, total days, and predicted finish date
 - Relative workload bar (green → yellow → red) for quick overload spotting
 - **Drag and drop** tasks between worker cards to reassign (completed tasks are locked)
@@ -68,6 +84,9 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Toggle with the ☀️ / 🌙 button in the top bar or import screen
 
 ### 💾 Save & Restore Sessions
+
+![Top bar with project name, predicted finish, zoom, theme, + Task, Quick Save and Autosave buttons](docs/screenshots/toolbar.png)
+
 - **New Project** — from the start screen, create a blank project, a named one, or load sample tasks, instead of importing a file
 - **Project name** — editable in the top bar or in Settings; saved in the session file and used as the default save filename (`<name> gantt.xlsx`)
 - **💾 Quick Save** — toolbar button available on every tab; writes directly back to the file you loaded or last saved without showing a dialog. On the very first save it opens a file picker and remembers the chosen path for all future Quick Saves. If the browser doesn't support the File System Access API it falls back to a triggered download
@@ -94,6 +113,30 @@ npm start
 ```
 
 The app opens at `http://localhost:5173`.
+
+### Quick Start
+
+Want to explore first? Drop [`examples/demo-project.xlsx`](examples/demo-project.xlsx) onto the start screen — it's the fictional "Website Relaunch" project used in these screenshots.
+
+**1. Start a project.** Create a blank or named project, load the sample tasks, or drop in your own `.xlsx` / `.csv` task file (see [Expected Columns](#expected-columns)). Dropping a saved session file restores everything.
+
+<img src="docs/screenshots/start-screen.png" alt="Start screen with Blank, Named and With sample tasks options and a drop zone for importing files" width="480">
+
+**2. Read the schedule.** The Gantt tab computes every task's dates from dependencies, working days, holidays and vacations. Filter by category, switch week/month zoom, and assign people from the dropdown on each row.
+
+**3. Add and edit tasks.** Click **+ Task** in the toolbar, or right-click any row → **Edit task…** to change its details, dependencies, assignee, fixed start date, milestone flag or Epic link.
+
+<table>
+  <tr>
+    <td valign="top"><img src="docs/screenshots/context-menu.png" alt="Right-click menu on a Gantt row with Edit task and Delete task" width="220"></td>
+    <td valign="top"><img src="docs/screenshots/edit-task.png" alt="Edit Task modal with fields for description, category, days, complexity, status, dependencies, assignee, fixed start date, integration effort, Epic and Key Milestone" width="300"></td>
+    <td valign="top"><img src="docs/screenshots/add-task.png" alt="Add Task modal, step 1 of 3" width="300"></td>
+  </tr>
+</table>
+
+**4. Balance the team.** In the **Workload** tab, drag tasks between people (or onto **Unassigned**) and watch finish dates update.
+
+**5. Save your work.** Click **💾 Quick Save** (it asks where to save the first time), or turn on **Autosave** to save after every change. Re-import the saved file anytime to continue.
 
 ---
 
@@ -190,6 +233,11 @@ With **Autosave** on, this file is kept up to date automatically after every cha
 
 ```
 index.html                         # Vite entry point
+docs/screenshots/                  # README screenshots (generated by npm run screenshots)
+examples/
+├── demo-project.xlsx              # Fictional demo session file used for the screenshots
+└── Template-Workplan.xlsx         # Example task file (import format, not a session file)
+scripts/screenshots.mjs            # Regenerates the demo file and README screenshots
 src/
 ├── App.jsx                        # UI, import/export, drag-and-drop, theme
 ├── App.test.jsx                   # Smoke tests for the import screen
@@ -214,6 +262,8 @@ src/
 vite.config.js                     # Vite build config
 vitest.config.js                   # Vitest test config
 ```
+
+**Updating screenshots:** after UI changes, run `npm run screenshots`. It regenerates `examples/demo-project.xlsx`, starts its own dev server, and captures every image in `docs/screenshots/` with headless Google Chrome (must be installed) and a frozen clock, so the output is reproducible.
 
 No external state management or backend required.
 
