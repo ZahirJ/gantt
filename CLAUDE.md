@@ -48,6 +48,8 @@ This is a single-page React app with **no backend, no routing, and no external s
 
 **Date formatting** (`fmtDate` in `scheduleUtils.js`): All dates are stored and compared as `YYYY-MM-DD` strings. Uses local date components (`getFullYear/getMonth/getDate`) rather than `toISOString()` to avoid UTC-offset shifts when converting Date objects returned by ExcelJS from date-typed cells.
 
+**Optimize toggle (experimental)**: the toolbar ⚡ Optimize button renders only when `optimizeEnabled` is true (default false, persisted in `localStorage["gantt.optimizeEnabled"]`). Settings → Experimental Features has the checkbox; `toggleOptimizeEnabled()` turns it on only after `askConfirm(..., "Enable")` and turns it off immediately. ↶ Undo is intentionally not gated — it stays visible while `undoHistory` is non-empty. Tests should not use the Optimize button as a "tasks loaded" signal; use the Quick Save title instead.
+
 **Optimization** (`levelOptimize` in `scheduleUtils.js`): Minimises the overall project finish date (makespan) by moving task units across resources. Signature: `levelOptimize(tasks, resources, assignments, progress, holidays, vacMap, projectStart, fixedStartDates = {})` — `fixedStartDates` is threaded through to `scheduleTasks`. A **unit** = one non-test lead task + all test tasks that directly depend on it. Key behaviours:
 - Tasks with Status = Completed are filtered out on file import (before any state is set)
 - Units containing any completed task are excluded from all moves
