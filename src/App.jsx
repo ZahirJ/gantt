@@ -4,7 +4,7 @@ import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptim
 import AddTaskModal from "./components/AddTaskModal";
 import EditTaskModal from "./components/EditTaskModal";
 import ConfirmDialog from "./components/ConfirmDialog";
-import { applyDeleteTask, applyDeleteAllUnassigned, applyUnassignAllForPerson } from "./utils/taskMutations";
+import { applyDeleteTask, applyDeleteAllUnassigned, applyUnassignAllForPerson, applyRenameResource, validateResourceRename, applyRemoveResource } from "./utils/taskMutations";
 
 // ── Themes ─────────────────────────────────────────────────────────────────────
 const THEMES = {
@@ -322,6 +322,7 @@ export default function GanttApp() {
   const [dragOver, setDragOver] = useState(false);
   const [newHoliday, setNewHoliday] = useState("");
   const [newResource, setNewResource] = useState("");
+  const [renamingResource, setRenamingResource] = useState(null); // null | { from, value, error }
   const [undoHistory, setUndoHistory] = useState([]);
   const [filterCategory, setFilterCategory] = useState("All");
   const [themeKey, setThemeKey] = useState("dark");
@@ -715,6 +716,40 @@ export default function GanttApp() {
 
   const unassigned = scheduledTasks.filter((t) => !assignments[t["Serial Number"]]);
 
+  function commitRenameResource() {
+    if (!renamingResource) return;
+    const { from, value } = renamingResource;
+    const to = value.trim();
+    if (to === from) { setRenamingResource(null); return; }
+    const error = validateResourceRename(from, to, resources);
+    if (error) { setRenamingResource({ ...renamingResource, error }); return; }
+    const next = applyRenameResource(from, to, { resources, assignments, vacMap, rawTasks, undoHistory });
+    setResources(next.resources);
+    setAssignments(next.assignments);
+    setVacMap(next.vacMap);
+    setRawTasks(next.rawTasks);
+    setUndoHistory(next.undoHistory);
+    setRenamingResource(null);
+  }
+
+  function removeResource(name) {
+    const next = applyRemoveResource(name, { resources, assignments, vacMap, rawTasks, undoHistory });
+    setResources(next.resources);
+    setAssignments(next.assignments);
+    setVacMap(next.vacMap);
+    setRawTasks(next.rawTasks);
+    setUndoHistory(next.undoHistory);
+  }
+
+  function confirmRemoveResource(name) {
+    const count = Object.values(assignments).filter(p => p === name).length;
+    const details = [
+      count ? `${count} task${count === 1 ? "" : "s"} will move to Unassigned` : null,
+      vacMap[name]?.length ? "their vacation days will be deleted" : null,
+    ].filter(Boolean);
+    askConfirm(`Remove ${name}?${details.length ? ` ${details.join("; ")}.` : ""}`, () => removeResource(name), "Remove");
+  }
+
   function addResource() {
     const r = newResource.trim();
     if (!r) return;
@@ -1081,7 +1116,7 @@ export default function GanttApp() {
         <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 11, letterSpacing: 3, color: C.accent, flexShrink: 0 }}>GANTT</div>
         <div style={{ display: "flex", gap: 2 }}>
           {["gantt", "workload", "settings"].map((t) => (
-            <button key={t} onClick={() => setTab(t)} style={{
+            <button key={t} onClick={() => { setTab(t); setContextMenu(null); setGanttContextMenu(null); setRenamingResource(null); }} style={{
               background: tab === t ? C.accentDim : "none", border: "none",
               color: tab === t ? C.accent : C.muted,
               padding: "5px 14px", borderRadius: 6, cursor: "pointer",
@@ -1931,10 +1966,30 @@ export default function GanttApp() {
                 <SBtn C={C} onClick={addResource}>Add</SBtn>
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {resources.map((r) => (
-                  <SChip C={C} key={r} onX={() => setResources((rs) => rs.filter((x) => x !== r))}>{r}</SChip>
+                {resources.map((r) => renamingResource?.from === r ? (
+                  <span key={r} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: C.card, border: `1px solid ${renamingResource.error ? C.red : C.accent}`, borderRadius: 20, padding: "2px 6px 2px 10px", maxWidth: "100%", boxSizing: "border-box" }}>
+                    <input
+                      autoFocus
+                      aria-label={`Rename ${r}`}
+                      value={renamingResource.value}
+                      onChange={(e) => setRenamingResource({ from: r, value: e.target.value, error: null })}
+                      onKeyDown={(e) => {
+                        if (e.nativeEvent.isComposing) return; // IME composition in progress
+                        if (e.key === "Enter") commitRenameResource();
+                        else if (e.key === "Escape") setRenamingResource(null);
+                      }}
+                      style={{ background: "transparent", border: "none", outline: "none", color: C.text, fontSize: 11, width: Math.max(60, renamingResource.value.length * 7), maxWidth: 200, minWidth: 0 }}
+                    />
+                    <button onClick={commitRenameResource} title="Save name" style={{ background: "none", border: "none", color: C.green, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>✓</button>
+                    <button onClick={() => setRenamingResource(null)} title="Cancel" style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>✕</button>
+                  </span>
+                ) : (
+                  <SChip C={C} key={r} onEdit={() => setRenamingResource({ from: r, value: r, error: null })} editTitle={`Rename ${r}`} onX={() => confirmRemoveResource(r)}>{r}</SChip>
                 ))}
               </div>
+              {renamingResource?.error && (
+                <div role="alert" style={{ color: C.red, fontSize: 11, marginTop: 6 }}>{renamingResource.error}</div>
+              )}
             </div>
 
             <div>
@@ -2046,7 +2101,7 @@ function SLabel({ children, C }) {
 function SBtn({ onClick, children, C }) {
   return <button onClick={onClick} style={{ background: C.accent, border: "none", color: "#fff", borderRadius: 8, padding: "8px 18px", cursor: "pointer", fontSize: 12 }}>{children}</button>;
 }
-function SChip({ children, onX, mono, small, C }) {
+function SChip({ children, onX, onEdit, editTitle, mono, small, C }) {
   return (
     <span style={{
       background: C.card, border: `1px solid ${C.border}`, borderRadius: 20,
@@ -2055,6 +2110,7 @@ function SChip({ children, onX, mono, small, C }) {
       display: "inline-flex", alignItems: "center", gap: 5, color: C.text,
     }}>
       {children}
+      {onEdit && <button onClick={onEdit} title={editTitle} aria-label={editTitle} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 11, padding: "0 4px 0 2px", lineHeight: 1 }}>✎</button>}
       <button onClick={onX} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}>×</button>
     </span>
   );
