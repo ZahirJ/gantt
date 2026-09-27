@@ -259,8 +259,8 @@ src/
     ├── optimize.js                # Legacy greedy optimizer (kept for its test suite)
     ├── optimize.test.js           # Unit tests for the legacy optimizer
     └── optimize.bench.test.js     # Performance / scale tests
-vite.config.js                     # Vite build config
-vitest.config.js                   # Vitest test config
+vite.config.mjs                    # Vite build config
+vitest.config.mjs                  # Vitest test config
 ```
 
 **Updating screenshots:** after UI changes, run `npm run screenshots`. It regenerates `examples/demo-project.xlsx`, starts its own dev server, and captures every image in `docs/screenshots/` with headless Google Chrome (must be installed) and a frozen clock, so the output is reproducible.
