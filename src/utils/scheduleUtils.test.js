@@ -1,4 +1,21 @@
-import { fmtDate, scheduleTasks, levelOptimize, detectFixedCollisions } from "./scheduleUtils";
+import { fmtDate, fiscalQuarterLabel, scheduleTasks, levelOptimize, detectFixedCollisions } from "./scheduleUtils";
+
+describe("fiscalQuarterLabel", () => {
+  it("maps months to fiscal quarters with FY starting April 1", () => {
+    expect(fiscalQuarterLabel(new Date(2026, 3, 1))).toBe("Q1 FY26");
+    expect(fiscalQuarterLabel(new Date(2026, 5, 30))).toBe("Q1 FY26");
+    expect(fiscalQuarterLabel(new Date(2026, 6, 1))).toBe("Q2 FY26");
+    expect(fiscalQuarterLabel(new Date(2026, 9, 15))).toBe("Q3 FY26");
+    expect(fiscalQuarterLabel(new Date(2026, 11, 31))).toBe("Q3 FY26");
+    expect(fiscalQuarterLabel(new Date(2027, 0, 1))).toBe("Q4 FY26");
+    expect(fiscalQuarterLabel(new Date(2027, 2, 31))).toBe("Q4 FY26");
+    expect(fiscalQuarterLabel(new Date(2027, 3, 1))).toBe("Q1 FY27");
+  });
+
+  it("zero-pads the fiscal year", () => {
+    expect(fiscalQuarterLabel(new Date(2009, 4, 1))).toBe("Q1 FY09");
+  });
+});
 
 describe("fmtDate", () => {
   it("formats a date string to YYYY-MM-DD", () => {

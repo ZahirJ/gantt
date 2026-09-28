@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import ExcelJS from "exceljs";
-import { fmtDate, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize, detectFixedCollisions } from "./utils/scheduleUtils";
+import { fmtDate, fiscalQuarterLabel, isWorkday, nextWorkday, addWorkdays, scheduleTasks, levelOptimize, detectFixedCollisions } from "./utils/scheduleUtils";
 import AddTaskModal from "./components/AddTaskModal";
 import EditTaskModal from "./components/EditTaskModal";
 import ConfirmDialog from "./components/ConfirmDialog";
@@ -668,7 +668,7 @@ export default function GanttApp() {
     return dates;
   }, [projectStart, projectEnd]);
 
-  const colW = zoom === "week" ? 34 : 18;
+  const colW = zoom === "week" ? 34 : zoom === "month" ? 18 : 6;
   const rowH = 40;
   const labelW = 370;
   const totalW = workDates.length * colW;
@@ -691,11 +691,37 @@ export default function GanttApp() {
     workDates.forEach((d) => {
       const label = zoom === "week"
         ? `W${getWeek(d)} · ${d.toLocaleString("default", { month: "short" })} ${d.getFullYear()}`
-        : `${d.toLocaleString("default", { month: "short" })} ${d.getFullYear()}`;
+        : zoom === "month"
+        ? `${d.toLocaleString("default", { month: "short" })} ${d.getFullYear()}`
+        : fiscalQuarterLabel(d);
       if (!cur || cur.label !== label) { cur = { label, count: 1 }; groups.push(cur); }
       else cur.count++;
     });
     return groups;
+  }, [workDates, zoom]);
+
+  // Quarter view: second header row shows month names instead of day numbers
+  const monthGroups = useMemo(() => {
+    const groups = [];
+    let cur = null;
+    workDates.forEach((d, i) => {
+      const key = `${d.getFullYear()}-${d.getMonth()}`;
+      if (!cur || cur.key !== key) { cur = { key, label: d.toLocaleString("default", { month: "short" }), start: i, count: 1 }; groups.push(cur); }
+      else cur.count++;
+    });
+    return groups;
+  }, [workDates]);
+
+  // Indices where a new period (week / month / fiscal quarter) begins — drawn as bold separators
+  const periodStarts = useMemo(() => {
+    const periodKey = (d) => zoom === "week"
+      ? fmtDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() - ((d.getDay() + 6) % 7)))
+      : zoom === "month" ? `${d.getFullYear()}-${d.getMonth()}` : fiscalQuarterLabel(d);
+    const starts = [];
+    workDates.forEach((d, i) => {
+      if (i > 0 && periodKey(d) !== periodKey(workDates[i - 1])) starts.push(i);
+    });
+    return starts;
   }, [workDates, zoom]);
 
   const todayIdx = workDates.findIndex((d) => fmtDate(d) >= fmtDate(new Date()));
@@ -1157,7 +1183,7 @@ export default function GanttApp() {
           Predicted finish: <span style={{ color: C.green, fontFamily: "'DM Mono', monospace" }}>{projectEnd}</span>
         </div>
         <div style={{ display: "flex", gap: 2 }}>
-          {["week", "month"].map((z) => (
+          {["week", "month", "quarter"].map((z) => (
             <button key={z} onClick={() => setZoom(z)} style={{
               background: zoom === z ? C.border : "none", border: "none",
               color: zoom === z ? C.text : C.muted,
@@ -1335,15 +1361,28 @@ export default function GanttApp() {
                       fontSize: 9, color: C.muted, fontFamily: "'DM Mono', monospace", overflow: "hidden", whiteSpace: "nowrap",
                     }}>{g.label}</div>
                   ))}
+                  <svg style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }} width={totalW} height={32}>
+                    {periodStarts.map((i) => <line key={i} x1={i * colW} y1={0} x2={i * colW} y2={32} stroke={C.muted} strokeWidth={1.5} strokeOpacity={0.55} />)}
+                  </svg>
                 </div>
                 {/* Day header */}
                 <div style={{ height: 24, display: "flex", background: C.surface + "bb", borderBottom: `1px solid ${C.border}`, position: "sticky", top: 32, zIndex: 2 }}>
-                  {workDates.map((d, i) => (
-                    <div key={i} style={{
-                      width: colW, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                      fontSize: 8, color: C.muted + "88", borderRight: `1px solid ${C.border}18`,
-                    }}>{zoom === "week" ? d.getDate() : ""}</div>
-                  ))}
+                  {zoom === "quarter"
+                    ? monthGroups.map((g) => (
+                      <div key={g.key} style={{
+                        width: g.count * colW, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 8, color: C.muted + "88", borderRight: `1px solid ${C.border}44`, overflow: "hidden", whiteSpace: "nowrap",
+                      }}>{g.label}</div>
+                    ))
+                    : workDates.map((d, i) => (
+                      <div key={i} style={{
+                        width: colW, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: 8, color: C.muted + "88", borderRight: `1px solid ${C.border}18`,
+                      }}>{zoom === "week" ? d.getDate() : ""}</div>
+                    ))}
+                  <svg style={{ position: "absolute", top: 0, left: 0, pointerEvents: "none" }} width={totalW} height={24}>
+                    {periodStarts.map((i) => <line key={i} x1={i * colW} y1={0} x2={i * colW} y2={24} stroke={C.muted} strokeWidth={1.5} strokeOpacity={0.55} />)}
+                  </svg>
                 </div>
 
                 {/* Milestone labels row — sticky just below headers, only when milestones exist */}
@@ -1392,8 +1431,11 @@ export default function GanttApp() {
 
                 {/* SVG: grid lines + today (behind bars) */}
                 <svg style={{ position: "absolute", top: 56 + (scheduledTasks.some(t => milestones[t["Serial Number"]] && t._end) ? 110 : 0), left: 0, pointerEvents: "none" }} width={totalW} height={totalH}>
-                  {workDates.map((_, i) => (
+                  {(zoom === "quarter" ? monthGroups.map((g) => g.start) : workDates.map((_, i) => i)).map((i) => (
                     <line key={i} x1={i * colW} y1={0} x2={i * colW} y2={totalH} stroke={C.border} strokeWidth={0.4} strokeOpacity={0.5} />
+                  ))}
+                  {periodStarts.map((i) => (
+                    <line key={`p${i}`} x1={i * colW} y1={0} x2={i * colW} y2={totalH} stroke={C.muted} strokeWidth={1.5} strokeOpacity={0.55} />
                   ))}
                   {scheduledTasks.map((_, i) => (
                     <line key={i} x1={0} y1={i * rowH} x2={totalW} y2={i * rowH} stroke={C.border} strokeWidth={0.3} strokeOpacity={0.35} />
