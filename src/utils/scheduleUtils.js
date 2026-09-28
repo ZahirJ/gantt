@@ -9,6 +9,16 @@ export function fmtDate(d) {
   ].join("-");
 }
 
+// Fiscal year starts April 1 and is named after the calendar year it starts in:
+// Apr–Jun 2026 → "Q1 FY26", Jan–Mar 2027 → "Q4 FY26".
+export function fiscalQuarterLabel(d) {
+  const date = new Date(d);
+  const m = date.getMonth();
+  const fy = m >= 3 ? date.getFullYear() : date.getFullYear() - 1;
+  const q = Math.floor(((m + 9) % 12) / 3) + 1;
+  return `Q${q} FY${String(fy % 100).padStart(2, "0")}`;
+}
+
 export function isWorkday(date, holidays, vacMap, person) {
   const dow = date.getDay();
   if (dow === 0 || dow === 6) return false;

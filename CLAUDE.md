@@ -19,7 +19,7 @@ npm run screenshots # Regenerate README screenshots + examples/demo-project.xlsx
 This is a single-page React app with **no backend, no routing, and no external state management**. Source files:
 
 - `src/App.jsx` — all UI, import/export, drag-and-drop, and theme logic
-- `src/utils/scheduleUtils.js` — pure scheduling helpers (`fmtDate`, `scheduleTasks`, `isWorkday`, etc.), `detectFixedCollisions` (fixed-start-date conflict detection), and the `levelOptimize` function; imported by both App.jsx and tests
+- `src/utils/scheduleUtils.js` — pure scheduling helpers (`fmtDate`, `fiscalQuarterLabel`, `scheduleTasks`, `isWorkday`, etc.), `detectFixedCollisions` (fixed-start-date conflict detection), and the `levelOptimize` function; imported by both App.jsx and tests
 - `src/utils/taskMutations.js` — pure helpers for task deletion, unassignment, and resource rename/removal (`applyDeleteTask`, `applyDeleteAllUnassigned`, `applyUnassignAllForPerson`, `validateResourceRename`, `applyRenameResource`, `applyRemoveResource`); take plain state objects and return new state objects without side effects
 - `src/utils/optimize.js` — legacy standalone optimizer (greedy local-search); kept for its test suite
 - `src/components/AddTaskModal.jsx` — multi-step modal for creating a new task
