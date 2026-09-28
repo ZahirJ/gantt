@@ -16,7 +16,7 @@ A dynamic Gantt chart scheduler for software teams. Import your task spreadsheet
 - Per-task progress sliders (% complete) shown inline on bars
 - Inline status selector per task — change status directly in the task list
 - Completed tasks are visually locked: non-draggable, assignee disabled, skipped by optimizer
-- Week and month zoom levels
+- Week, month and quarter zoom levels — quarters follow the April-start fiscal year (e.g. `Q1 FY26` = Apr–Jun 2026), with bold separators marking each period
 - Filter tasks by category
 - Test tasks are highlighted with a distinct color and TEST badge
 - **Fixed Start Date** — optional per-task constraint; the task will not start before the given date (set via Edit Task modal or imported from a `Fixed Start Date` column). Shown as a yellow left-edge stripe and a **FIX** badge on the bar. Non-fixed tasks automatically schedule around a fixed task's reserved slot on the same resource; if two fixed tasks still collide, a dismissible conflict banner appears at the top of the Gantt tab with one-click buttons to clear either task's fixed date
@@ -122,7 +122,7 @@ Want to explore first? Drop [`examples/demo-project.xlsx`](examples/demo-project
 
 <img src="docs/screenshots/start-screen.png" alt="Start screen with Blank, Named and With sample tasks options and a drop zone for importing files" width="480">
 
-**2. Read the schedule.** The Gantt tab computes every task's dates from dependencies, working days, holidays and vacations. Filter by category, switch week/month zoom, and assign people from the dropdown on each row.
+**2. Read the schedule.** The Gantt tab computes every task's dates from dependencies, working days, holidays and vacations. Filter by category, switch week/month/quarter zoom, and assign people from the dropdown on each row.
 
 **3. Add and edit tasks.** Click **+ Task** in the toolbar, or right-click any row → **Edit task…** to change its details, dependencies, assignee, fixed start date, milestone flag or Epic link.
 
